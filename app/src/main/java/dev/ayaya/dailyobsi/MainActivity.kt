@@ -1,10 +1,12 @@
 package dev.ayaya.dailyobsi
 
 import android.content.Intent
+import android.graphics.Color
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
+import androidx.activity.SystemBarStyle
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -28,8 +30,10 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import dev.ayaya.dailyobsi.widget.TodoWidget
 import java.time.LocalDate
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -37,7 +41,14 @@ class MainActivity : ComponentActivity() {
         // Lets the system draw transparent, theme-matched status/nav bars
         // instead of the old opaque light-theme scrim -- without this the
         // bars stayed solid white/light regardless of app theme or dark mode.
-        enableEdgeToEdge()
+        // enableEdgeToEdge()'s own default already makes the status bar fully
+        // transparent, but NOT the navigation bar -- that defaults to a
+        // translucent scrim (DefaultLightScrim/DefaultDarkScrim) so 3-button
+        // nav stays legible over arbitrary content. This app wants the same
+        // literal transparency there too, content visible straight through.
+        enableEdgeToEdge(
+            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
+        )
         setContent {
             val context = androidx.compose.ui.platform.LocalContext.current
             val dark = isSystemInDarkTheme()
@@ -50,15 +61,18 @@ class MainActivity : ComponentActivity() {
                 else -> lightColorScheme()
             }
             MaterialTheme(colorScheme = colorScheme) {
-                // safeDrawingPadding() goes on the inner Box, not the Surface
-                // itself -- padding the Surface shrinks its own bounds inward
-                // by the inset, so its background never reaches behind the
-                // status/nav bars at all, leaving a mismatched-color gap/seam
-                // right at the edge. This way the Surface's background fills
-                // the literal full screen and only the content inside is
-                // pushed clear of the system bars.
+                // Top/horizontal safe-drawing inset only here, NOT bottom --
+                // reading mode wants its content to actually draw behind the
+                // (now-transparent) nav bar rather than stop short of it.
+                // Edit mode/buttons/the section editor's field each add their
+                // own navigationBarsPadding() locally instead, so only
+                // reading mode gets the "extends under the nav bar" look.
                 Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(modifier = Modifier.safeDrawingPadding()) {
+                    Box(
+                        modifier = Modifier.windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
+                        )
+                    ) {
                         DailyObsiApp()
                     }
                 }
@@ -94,23 +108,42 @@ fun DailyObsiApp() {
     var editingSectionLine by remember { mutableStateOf<Int?>(null) }
     var sectionDraft by remember { mutableStateOf("") }
 
-    fun loadNote(date: LocalDate) {
+    // SAF calls (findFile/readText/writeText/createTodayFile) go through
+    // ContentResolver -> Binder IPC to the DocumentsProvider -- not
+    // guaranteed fast, especially against a large/actively-synced daily
+    // folder. Running any of that directly on the main thread risks an ANR
+    // ("Input dispatching timed out") the instant the provider's slow to
+    // answer; a real one hit exactly this path via onOpenYesterday (a plain
+    // findFile call) with a 5s+ stall. So every SAF call here is pushed onto
+    // Dispatchers.IO inside a coroutine -- loadNoteSuspend/persist's caller
+    // always resumes on Main to touch Compose state, but the SAF work itself
+    // never runs there.
+    suspend fun loadNoteSuspend(date: LocalDate) {
         val uri = dailyUri ?: return
-        val file = DailyNote.findFile(context, uri, date)
+        val (file, content, yFile) = withContext(Dispatchers.IO) {
+            val f = DailyNote.findFile(context, uri, date)
+            val c = f?.let { DailyNote.readText(context, it.uri) } ?: ""
+            val y = if (f == null && date == LocalDate.now()) DailyNote.findFile(context, uri, date.minusDays(1)) else null
+            Triple(f, c, y)
+        }
         noteFile = file
-        text = file?.let { DailyNote.readText(context, it.uri) } ?: ""
+        text = content
         viewingDate = date
         editMode = false
-        yesterdayFile = if (file == null && date == LocalDate.now())
-            DailyNote.findFile(context, uri, date.minusDays(1))
-        else null
+        yesterdayFile = yFile
+    }
+
+    fun loadNote(date: LocalDate) {
+        scope.launch { loadNoteSuspend(date) }
     }
 
     fun persist(newText: String) {
         val file = noteFile ?: return
         text = newText
-        DailyNote.writeText(context, file.uri, newText)
-        scope.launch { TodoWidget().updateAll(context) }
+        scope.launch {
+            withContext(Dispatchers.IO) { DailyNote.writeText(context, file.uri, newText) }
+            TodoWidget().updateAll(context)
+        }
     }
 
     // No Save button -- edit mode autosaves instead: periodically while
@@ -137,7 +170,7 @@ fun DailyObsiApp() {
         editingSectionLine = null
     }
 
-    LaunchedEffect(dailyUri) { if (dailyUri != null) loadNote(LocalDate.now()) }
+    LaunchedEffect(dailyUri) { if (dailyUri != null) loadNoteSuspend(LocalDate.now()) }
 
     LaunchedEffect(editMode) {
         if (editMode) {
@@ -167,6 +200,14 @@ fun DailyObsiApp() {
     BackHandler(enabled = editingSectionLine != null) { cancelSectionEditor() }
 
     Scaffold(
+        // Scaffold reserves system-bar insets in its content padding by
+        // default -- but MainActivity's outer Box(Modifier.safeDrawingPadding())
+        // already does that for the whole app, so without this the bottom
+        // inset gets applied twice: once there, once here. Same background
+        // color both times so there's no visible seam (unlike the earlier
+        // Surface/safeDrawingPadding bug), just the reading/editing area's
+        // bottom sitting well above the screen's actual bottom edge.
+        contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
             TopAppBar(
                 // The file name is more useful screen real-estate than a
@@ -236,8 +277,12 @@ fun DailyObsiApp() {
                 onTextChanged = { text = it },
                 onOpenYesterday = { loadNote(LocalDate.now().minusDays(1)) },
                 onCreateToday = {
-                    val created = DailyNote.createTodayFile(context, dailyUri!!, templateUri)
-                    if (created != null) loadNote(LocalDate.now())
+                    scope.launch {
+                        val created = withContext(Dispatchers.IO) {
+                            DailyNote.createTodayFile(context, dailyUri!!, templateUri)
+                        }
+                        if (created != null) loadNoteSuspend(LocalDate.now())
+                    }
                 }
             )
         }
@@ -256,7 +301,7 @@ private fun SectionEditorScreen(
     MarkdownTextField(
         value = draft,
         onValueChange = onDraftChanged,
-        modifier = modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+        modifier = modifier.fillMaxSize().navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
         textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
@@ -302,7 +347,7 @@ private fun SettingsScreen(
         }
     }
 
-    Column(modifier = modifier.fillMaxSize().padding(16.dp)) {
+    Column(modifier = modifier.fillMaxSize().navigationBarsPadding().padding(16.dp)) {
         Text("Settings", style = MaterialTheme.typography.titleLarge)
         Spacer(Modifier.height(16.dp))
 
@@ -353,8 +398,24 @@ private fun EditorScreen(
     onCreateToday: () -> Unit,
 ) {
     // Edit mode goes edge-to-edge (no padding, no boxed frame) to give the
-    // raw text as much room as possible; reading mode/empty-state keep margins.
-    Column(modifier = modifier.fillMaxSize().padding(if (editMode) 0.dp else 16.dp)) {
+    // raw text as much room as possible. Reading mode keeps left/right/top
+    // margins for readability, but NOT bottom -- MainActivity's outer Box
+    // deliberately no longer reserves the nav-bar inset, specifically so
+    // reading mode's list can draw all the way behind the (transparent) nav
+    // bar. Edit mode and the empty state (nothing scrollable to show
+    // through the nav bar, just buttons that need to stay tappable) opt
+    // back into that inset locally via navigationBarsPadding() instead.
+    val emptyState = noteFile == null
+    Column(
+        modifier = modifier.fillMaxSize()
+            .padding(
+                start = if (editMode) 0.dp else 16.dp,
+                end = if (editMode) 0.dp else 16.dp,
+                top = if (editMode) 0.dp else 16.dp,
+                bottom = 0.dp
+            )
+            .then(if (editMode || emptyState) Modifier.navigationBarsPadding() else Modifier)
+    ) {
         if (noteFile == null) {
             Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
                 Text(
@@ -383,7 +444,11 @@ private fun EditorScreen(
             MarkdownTextField(
                 value = text,
                 onValueChange = onTextChanged,
-                modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp, vertical = 8.dp),
+                // No bottom padding here either -- same reasoning as reading
+                // mode's Column: it'd stack on top of the safe-area inset
+                // already reserved once, shrinking how far the field can
+                // actually scroll before its last line clears the gesture-nav area.
+                modifier = Modifier.fillMaxWidth().weight(1f).navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp),
                 keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
                 // Reading mode's body text is bodyLarge (16sp) -- match that
                 // scale here too (was stuck at bodyMedium/14sp, way too small),
