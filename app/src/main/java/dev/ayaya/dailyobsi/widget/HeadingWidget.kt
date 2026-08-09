@@ -105,7 +105,7 @@ class HeadingWidget : GlanceAppWidget() {
                 }
             }
 
-            val embeds by produceState(initialValue = emptyMap<String, ImageProvider>(), key1 = sync) {
+            val embeds by produceState(initialValue = emptyMap<String, GlanceEmbedImage>(), key1 = sync) {
                 value = if (sync is HeadingSync.Loaded) resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks) else emptyMap()
             }
 

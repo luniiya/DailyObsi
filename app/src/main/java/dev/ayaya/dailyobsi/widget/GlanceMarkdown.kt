@@ -9,12 +9,14 @@ import androidx.glance.GlanceModifier
 import androidx.glance.GlanceTheme
 import androidx.glance.Image
 import androidx.glance.ImageProvider
+import androidx.glance.LocalSize
 import androidx.glance.action.ActionParameters
 import androidx.glance.action.actionParametersOf
 import androidx.glance.action.clickable
 import androidx.glance.appwidget.CheckBox
 import androidx.glance.appwidget.CheckboxDefaults
 import androidx.glance.appwidget.LinearProgressIndicator
+import androidx.glance.appwidget.cornerRadius
 import androidx.glance.appwidget.action.ActionCallback
 import androidx.glance.appwidget.action.actionRunCallback
 import androidx.glance.background
@@ -56,6 +58,7 @@ import dev.ayaya.dailyobsi.leadingWhitespaceOf
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 
 /**
@@ -273,7 +276,7 @@ fun GlanceInlineText(
  *  the SAF attachment search/bitmap decode has to happen in provideGlance,
  *  before provideContent, not reactively like EmbedImage's Coil AsyncImage. */
 @Composable
-fun GlanceMarkdownBlocks(blocks: List<Block>, embedImages: Map<String, ImageProvider>) {
+fun GlanceMarkdownBlocks(blocks: List<Block>, embedImages: Map<String, GlanceEmbedImage>) {
     Column(modifier = GlanceModifier.fillMaxWidth()) {
         for (block in blocks) {
             when (block) {
@@ -285,7 +288,7 @@ fun GlanceMarkdownBlocks(blocks: List<Block>, embedImages: Map<String, ImageProv
 }
 
 @Composable
-private fun GlanceMarkdownLine(line: String, lineIndex: Int, embedImages: Map<String, ImageProvider>) {
+private fun GlanceMarkdownLine(line: String, lineIndex: Int, embedImages: Map<String, GlanceEmbedImage>) {
     val checkboxMatch = CHECKBOX_LINE.matchEntire(line)
     val embedMatch = EMBED_LINE.matchEntire(line.trim())
     val headerMatch = HEADER.matchEntire(line)
@@ -306,22 +309,25 @@ private fun GlanceMarkdownLine(line: String, lineIndex: Int, embedImages: Map<St
                 modifier = GlanceModifier
                     .fillMaxWidth()
                     .padding(start = (indent * 14).dp, top = 3.dp, bottom = 3.dp)
-                    // Whole-row tap target -- but see the CheckBox's own
-                    // onCheckedChange below too. A real, currently-
-                    // reproducing bug (confirmed via logcat: only ONE
-                    // GlanceCheckboxToggleAction.FIRED across many taps,
-                    // matching every case where the tap landed on the
-                    // checkbox glyph itself) showed that a native RemoteViews
-                    // CompoundButton's own view bounds can eat a touch before
-                    // it reaches the enclosing Row's clickable, even with
-                    // onCheckedChange = null on the CheckBox -- the row-level
-                    // handler alone isn't reliably hit for taps landing on
-                    // the checkbox specifically. Giving the CheckBox the same
-                    // action directly (matching in-app MarkdownReading.kt's
-                    // proven-working Checkbox+Row double-handler pattern,
-                    // both pointing at the same callback) covers both
-                    // regions: the CheckBox's own bounds via its own handler,
-                    // everything else (the label text) via the row's.
+                    // Whole-row tap target -- the ONLY click handler for
+                    // this row, deliberately. Tried giving the CheckBox its
+                    // own onCheckedChange too (matching in-app
+                    // MarkdownReading.kt's Checkbox+Row pattern), on the
+                    // theory that the native compound button's view bounds
+                    // were eating touches before they reached the Row.
+                    // Wrong, and worse than the original bug: confirmed via
+                    // logcat that a single tap on/near the checkbox fires
+                    // BOTH handlers -- one FIRED event with no extras (the
+                    // Row's clickable), a second ~700ms later carrying
+                    // android.widget.extra.CHECKED (the CheckBox's own
+                    // native click semantics) -- toggling the line, then
+                    // immediately toggling it back, which is exactly "fires
+                    // once in a blue moon" from the user's side. Worse: the
+                    // two onAction calls each independently re-read/re-write
+                    // the whole file with no coordination between them, a
+                    // genuine race that can lose one of the two writes --
+                    // the likely cause of a separately reported "tick it and
+                    // the line disappears" symptom. Single handler only.
                     .clickable(toggleAction)
             ) {
                 // A real native RemoteViews checkbox, not the old "☑"/"☐"
@@ -330,10 +336,11 @@ private fun GlanceMarkdownLine(line: String, lineIndex: Int, embedImages: Map<St
                 // font and never actually looked like a real checkbox).
                 // Confirmed to exist by reading Glance's own source
                 // (CheckBox.kt) -- androidx.glance.appwidget.CheckBox wraps
-                // an actual RemoteViews compound button.
+                // an actual RemoteViews compound button. onCheckedChange =
+                // null: display-only, see the Row's own comment above for why.
                 CheckBox(
                     checked = checked,
-                    onCheckedChange = toggleAction,
+                    onCheckedChange = null,
                     colors = CheckboxDefaults.colors(
                         checkedColor = GlanceTheme.colors.primary,
                         uncheckedColor = GlanceTheme.colors.outline,
@@ -345,13 +352,33 @@ private fun GlanceMarkdownLine(line: String, lineIndex: Int, embedImages: Map<St
         }
 
         embedMatch != null -> {
-            val provider = embedImages[embedMatch.groupValues[1]]
-            if (provider != null) {
+            val embed = embedImages[embedMatch.groupValues[1]]
+            if (embed != null) {
+                // Neither a fixed height + Fit (letterboxes any image whose
+                // aspect ratio doesn't match -- big empty margins around a
+                // tiny picture) nor Crop (fills the box but visibly zooms
+                // into/crops the image -- reported as equally unacceptable,
+                // "we cant have images zoomed in that much") is right on its
+                // own. The actual fix: size the BOX to the image's own real
+                // aspect ratio (from the decoded bitmap, see
+                // resolveEmbedImagesForGlance/GlanceEmbedImage) so Fit has
+                // nothing to letterbox -- the box already matches. Width
+                // comes from LocalSize.current (the widget's actual current
+                // size, live under SizeMode.Exact) minus the 12dp*2
+                // horizontal padding GlanceMarkdownBlocks' caller wraps
+                // every block in; clamped so a pathological aspect ratio
+                // (very tall/narrow) can't blow out the widget's height.
+                val availableWidthDp = (LocalSize.current.width - 24.dp).value.coerceAtLeast(40f)
+                val heightDp = (availableWidthDp / embed.aspectRatio).coerceIn(40f, 240f)
                 Image(
-                    provider = provider,
+                    provider = embed.provider,
                     contentDescription = embedMatch.groupValues[1],
                     contentScale = ContentScale.Fit,
-                    modifier = GlanceModifier.fillMaxWidth().height(140.dp).padding(vertical = 4.dp)
+                    // Matches EmbedImage's RoundedCornerShape(12.dp) in the
+                    // in-app renderer (MarkdownReading.kt) -- cornerRadius
+                    // works on any Glance view, not just containers, so this
+                    // is the direct equivalent of Compose's .clip() there.
+                    modifier = GlanceModifier.fillMaxWidth().height(heightDp.dp).padding(vertical = 4.dp).cornerRadius(12.dp)
                 )
             } else {
                 Text(
@@ -507,7 +534,7 @@ private fun GlanceProgressBar(block: Block.Code) {
  *  attachments typically live next to the vault root, outside the picked
  *  daily folder, so a miss here is expected and handled (a text fallback),
  *  not an error. */
-suspend fun resolveEmbedImagesForGlance(context: Context, dailyUri: Uri, blocks: List<Block>): Map<String, ImageProvider> {
+suspend fun resolveEmbedImagesForGlance(context: Context, dailyUri: Uri, blocks: List<Block>): Map<String, GlanceEmbedImage> {
     val names = blocks
         .filterIsInstance<Block.Line>()
         .mapNotNull { EMBED_LINE.matchEntire(it.raw.trim())?.groupValues?.get(1) }
@@ -520,11 +547,23 @@ suspend fun resolveEmbedImagesForGlance(context: Context, dailyUri: Uri, blocks:
                 val bitmap = runCatching {
                     decodeSampledBitmap(context, file.uri, maxDimensionPx = 600)
                 }.getOrNull() ?: continue
-                put(name, ImageProvider(bitmap))
+                if (bitmap.width <= 0 || bitmap.height <= 0) continue
+                put(name, GlanceEmbedImage(ImageProvider(bitmap), bitmap.width.toFloat() / bitmap.height.toFloat()))
             }
         }
     }
 }
+
+/** [aspectRatio] (width / height, from the actual decoded bitmap) is what
+ *  lets the embed box in GlanceMarkdownLine be sized to the image's real
+ *  proportions instead of a fixed height -- a real reported bug: a fixed
+ *  height + ContentScale.Fit letterboxed any image whose aspect ratio didn't
+ *  match (big empty margins around a tiny picture), while ContentScale.Crop
+ *  filled the box but visibly zoomed into/cropped the image, which was
+ *  reported as just as unacceptable ("we cant have images zoomed in that
+ *  much" / "they should always fit"). Sizing the box itself to match is the
+ *  only way to get both "no letterboxing" and "no cropping" at once. */
+data class GlanceEmbedImage(val provider: ImageProvider, val aspectRatio: Float)
 
 /** Real, currently-reproducing crash fixed here: `BitmapFactory.decodeStream`
  *  with no options decodes at the file's native resolution -- a normal phone
@@ -578,13 +617,18 @@ class GlanceCheckboxToggleAction : ActionCallback {
             android.util.Log.w(tag, "GlanceCheckboxToggleAction: no today's file found, bailing")
             return
         }
-        val text = DailyNote.readText(context, file.uri)
-        val line = text.lines().getOrNull(lineIndex)
-        android.util.Log.d(tag, "GlanceCheckboxToggleAction: lineIndex=$lineIndex before=\"$line\"")
-        val newText = DailyNote.toggleCheckbox(text, lineIndex)
-        val newLine = newText.lines().getOrNull(lineIndex)
-        android.util.Log.d(tag, "GlanceCheckboxToggleAction: lineIndex=$lineIndex after=\"$newLine\" (unchanged=${line == newLine})")
-        DailyNote.writeText(context, file.uri, newText)
+        // See WidgetKeys.kt's noteWriteMutex doc comment -- this whole
+        // read-modify-write must run without another widget action
+        // interleaving its own read-modify-write in the middle of it.
+        noteWriteMutex.withLock {
+            val text = DailyNote.readText(context, file.uri)
+            val line = text.lines().getOrNull(lineIndex)
+            android.util.Log.d(tag, "GlanceCheckboxToggleAction: lineIndex=$lineIndex before=\"$line\"")
+            val newText = DailyNote.toggleCheckbox(text, lineIndex)
+            val newLine = newText.lines().getOrNull(lineIndex)
+            android.util.Log.d(tag, "GlanceCheckboxToggleAction: lineIndex=$lineIndex after=\"$newLine\" (unchanged=${line == newLine})")
+            DailyNote.writeText(context, file.uri, newText)
+        }
         refreshAllWidgets(context)
         android.util.Log.d(tag, "GlanceCheckboxToggleAction: write + refreshAllWidgets done")
     }
@@ -605,12 +649,15 @@ class GlanceProgressDeltaAction : ActionCallback {
         val max = parameters[MAX_KEY] ?: return
         val treeUri = VaultPrefs.getTreeUri(context) ?: return
         val file = DailyNote.findTodayFile(context, treeUri) ?: return
-        val text = DailyNote.readText(context, file.uri)
-        val line = text.lines().getOrNull(lineIndex) ?: return
-        val value = line.substringAfter("value:", "").trim().toIntOrNull() ?: return
-        val newValue = (value + delta).coerceIn(0, max)
-        val leading = leadingWhitespaceOf(line)
-        DailyNote.writeText(context, file.uri, DailyNote.replaceLine(text, lineIndex, "${leading}value: $newValue"))
+        // See WidgetKeys.kt's noteWriteMutex doc comment.
+        noteWriteMutex.withLock {
+            val text = DailyNote.readText(context, file.uri)
+            val line = text.lines().getOrNull(lineIndex) ?: return@withLock
+            val value = line.substringAfter("value:", "").trim().toIntOrNull() ?: return@withLock
+            val newValue = (value + delta).coerceIn(0, max)
+            val leading = leadingWhitespaceOf(line)
+            DailyNote.writeText(context, file.uri, DailyNote.replaceLine(text, lineIndex, "${leading}value: $newValue"))
+        }
         refreshAllWidgets(context)
     }
 }

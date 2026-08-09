@@ -29,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import dev.ayaya.dailyobsi.DailyNote
 import dev.ayaya.dailyobsi.VaultPrefs
+import kotlinx.coroutines.sync.withLock
 
 private val LINE_INDEX_KEY = ActionParameters.Key<Int>("line_index")
 
@@ -135,9 +136,15 @@ class ToggleTodoAction : ActionCallback {
         val treeUri = VaultPrefs.getTreeUri(context) ?: return
         val file = DailyNote.findTodayFile(context, treeUri) ?: return
 
-        val text = DailyNote.readText(context, file.uri)
-        val updated = DailyNote.toggleCheckbox(text, lineIndex)
-        DailyNote.writeText(context, file.uri, updated)
+        // See WidgetKeys.kt's noteWriteMutex doc comment -- shared across
+        // every widget's read-modify-write, not just this one, since a tap
+        // here and a tap on HeadingWidget/ReadingViewWidget both write the
+        // exact same file.
+        noteWriteMutex.withLock {
+            val text = DailyNote.readText(context, file.uri)
+            val updated = DailyNote.toggleCheckbox(text, lineIndex)
+            DailyNote.writeText(context, file.uri, updated)
+        }
 
         refreshAllWidgets(context)
     }

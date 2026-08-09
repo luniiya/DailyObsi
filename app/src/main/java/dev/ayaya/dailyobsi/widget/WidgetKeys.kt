@@ -3,6 +3,7 @@ package dev.ayaya.dailyobsi.widget
 import android.content.Context
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.glance.appwidget.updateAll
+import kotlinx.coroutines.sync.Mutex
 
 /**
  * Per-widget-instance persisted state: "which heading is this instance
@@ -41,3 +42,19 @@ suspend fun refreshAllWidgets(context: Context) {
     HeadingWidget().updateAll(context)
     ReadingViewWidget().updateAll(context)
 }
+
+/**
+ * Serializes every widget-triggered read-modify-write of the daily note
+ * (checkbox toggle, progress +/-) -- a real race, not theoretical: each
+ * ActionCallback independently does `readText` → compute new content →
+ * `writeText`, with no coordination between calls. Two taps close enough
+ * together (rapid taps across different lines, or -- the bug that actually
+ * surfaced this -- a single tap on a checkbox firing two separate handlers,
+ * see GlanceMarkdownLine's Row/CheckBox comment) can interleave: the second
+ * call's `readText` can happen before the first call's `writeText` lands,
+ * so the second call computes its new content from a file that doesn't yet
+ * include the first call's change -- and its own `writeText` then silently
+ * overwrites (loses) that change entirely. `withLock { }` around each
+ * action's full read-modify-write forces them to run one at a time instead.
+ */
+val noteWriteMutex = Mutex()
