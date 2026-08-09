@@ -8,11 +8,15 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.navigationBars
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -270,7 +274,14 @@ fun MarkdownView(
         }
     }
 
-    LazyColumn(modifier = modifier) {
+    // Content deliberately draws behind the (transparent) nav bar while
+    // scrolling -- but without this, scrolling all the way to the end has
+    // nowhere further to go, leaving the last item sitting *underneath* the
+    // nav bar rather than clear of it. contentPadding at the bottom equal to
+    // the nav bar's actual height gives the list that extra room to scroll
+    // into, so the true end of the note always ends up visible above the bar.
+    val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
+    LazyColumn(modifier = modifier, contentPadding = PaddingValues(bottom = navBarBottomPadding)) {
         items(visibleBlocks) { block ->
             when (block) {
                 is Block.Code ->
