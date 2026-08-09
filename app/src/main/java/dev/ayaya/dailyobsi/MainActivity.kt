@@ -15,11 +15,14 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -283,7 +286,9 @@ fun DailyObsiApp(startInEditMode: Boolean = false, openSectionHeading: String? =
                                 Text(if (editMode) "Read" else "Edit")
                             }
                         }
-                        IconButton(onClick = { showSettings = true }) { Text("⚙") }
+                        IconButton(onClick = { showSettings = true }) {
+                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
+                        }
                     }
                 }
             )
@@ -346,7 +351,7 @@ private fun SectionEditorScreen(
         onValueChange = onDraftChanged,
         modifier = modifier.fillMaxSize().navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp),
         keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
+        textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
         // Line indices from MarkdownTextField's overlay here are local to
         // `draft` (not the full file), so these operate on `draft` itself via
@@ -496,7 +501,7 @@ private fun EditorScreen(
                 // Reading mode's body text is bodyLarge (16sp) -- match that
                 // scale here too (was stuck at bodyMedium/14sp, way too small),
                 // just a hair smaller since edit mode also carries raw syntax.
-                textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
+                textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
                 // Checkbox lines get the same swipe-to-indent + up/down
                 // reorder as reading mode -- line indices here are absolute
