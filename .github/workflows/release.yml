@@ -9,6 +9,13 @@ on:
       - "v*"
   workflow_dispatch:
 
+# GitHub now defaults the auto-provided GITHUB_TOKEN to read-only on new
+# repos -- softprops/action-gh-release needs write access to actually create
+# the release, or it 403s ("Must have admin rights to Repository.") even
+# though the build/upload steps before it succeed fine on a read-only token.
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
