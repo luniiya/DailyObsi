@@ -2,6 +2,7 @@ package dev.ayaya.dailyobsi
 
 import android.content.Context
 import android.net.Uri
+import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
@@ -24,8 +25,43 @@ object DailyNote {
     fun fileNameFor(date: LocalDate): String = date.format(FILE_NAME_FORMAT) + ".md"
 
     fun findFile(context: Context, treeUri: Uri, date: LocalDate): DocumentFile? {
-        val folder = DocumentFile.fromTreeUri(context, treeUri) ?: return null
-        return folder.findFile(fileNameFor(date))
+        val name = fileNameFor(date)
+        return findFiles(context, treeUri, setOf(name))[name]
+    }
+
+    /** Looks up any number of files by exact name in *one* directory listing
+     *  query, instead of calling `DocumentFile.findFile` once per name.
+     *  `DocumentFile.findFile` lists the folder (1 query), then calls
+     *  `.getName()` on every child to compare -- and `TreeDocumentFile.getName()`
+     *  is its own separate Binder round-trip per child, not a cached read off
+     *  the listing (confirmed via a real ANR: the stack trace bottomed out in
+     *  exactly that method). That's `1 + N` queries per lookup, N = files in
+     *  the folder -- doubled at startup (today + yesterday-fallback) when
+     *  today's note doesn't exist yet. Reading DISPLAY_NAME directly off the
+     *  same cursor row the listing already returns needs exactly one query
+     *  total, for any number of names. */
+    fun findFiles(context: Context, treeUri: Uri, names: Set<String>): Map<String, DocumentFile> {
+        val result = mutableMapOf<String, DocumentFile>()
+        if (names.isEmpty()) return result
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            treeUri, DocumentsContract.getTreeDocumentId(treeUri)
+        )
+        context.contentResolver.query(
+            childrenUri,
+            arrayOf(DocumentsContract.Document.COLUMN_DOCUMENT_ID, DocumentsContract.Document.COLUMN_DISPLAY_NAME),
+            null, null, null
+        )?.use { cursor ->
+            val idIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DOCUMENT_ID)
+            val nameIdx = cursor.getColumnIndexOrThrow(DocumentsContract.Document.COLUMN_DISPLAY_NAME)
+            while (result.size < names.size && cursor.moveToNext()) {
+                val name = cursor.getString(nameIdx)
+                if (name in names) {
+                    val docUri = DocumentsContract.buildDocumentUriUsingTree(treeUri, cursor.getString(idIdx))
+                    DocumentFile.fromSingleUri(context, docUri)?.let { result[name] = it }
+                }
+            }
+        }
+        return result
     }
 
     fun findTodayFile(context: Context, treeUri: Uri): DocumentFile? =

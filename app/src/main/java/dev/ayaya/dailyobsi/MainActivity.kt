@@ -120,12 +120,21 @@ fun DailyObsiApp() {
     // never runs there.
     suspend fun loadNoteSuspend(date: LocalDate) {
         val uri = dailyUri ?: return
+        val startMs = System.currentTimeMillis()
         val (file, content, yFile) = withContext(Dispatchers.IO) {
-            val f = DailyNote.findFile(context, uri, date)
+            // Today and the yesterday-fallback are looked up in the SAME
+            // listing query via findFiles (not two separate DocumentFile.findFile
+            // calls) -- see its doc comment; this was the actual slow part
+            // the user was timing at startup, not readText.
+            val todayName = DailyNote.fileNameFor(date)
+            val yesterdayName = if (date == LocalDate.now()) DailyNote.fileNameFor(date.minusDays(1)) else null
+            val found = DailyNote.findFiles(context, uri, setOfNotNull(todayName, yesterdayName))
+            val f = found[todayName]
             val c = f?.let { DailyNote.readText(context, it.uri) } ?: ""
-            val y = if (f == null && date == LocalDate.now()) DailyNote.findFile(context, uri, date.minusDays(1)) else null
+            val y = if (f == null) yesterdayName?.let { found[it] } else null
             Triple(f, c, y)
         }
+        android.util.Log.d("DailyObsiPerf", "loadNoteSuspend($date) took ${System.currentTimeMillis() - startMs}ms, found=${file != null}")
         noteFile = file
         text = content
         viewingDate = date
