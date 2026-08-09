@@ -28,6 +28,7 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.offset
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
@@ -43,15 +44,16 @@ import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
@@ -68,7 +70,6 @@ import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
-import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
@@ -1070,16 +1071,11 @@ fun MarkdownTextField(
     }
 
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
-    var containerWidthPx by remember { mutableIntStateOf(0) }
     val scrollState = rememberScrollState()
     val density = LocalDensity.current
     val checkboxSizePx = with(density) { 18.dp.roundToPx() }
-    val iconSizePx = with(density) { 22.dp.roundToPx() }
-    // Up to 4 icons (⇤⇥▲▼) depending on which callbacks were actually passed.
-    val iconCount = (if (onShiftIndent != null) 2 else 0) + (if (onMoveLine != null) 2 else 0)
-    val iconsClusterWidthPx = iconSizePx * iconCount + with(density) { 8.dp.roundToPx() }
 
-    Box(modifier = modifier.onSizeChanged { containerWidthPx = it.width }) {
+    Box(modifier = modifier) {
         BasicTextField(
             state = state,
             modifier = Modifier.fillMaxSize(),
@@ -1098,9 +1094,7 @@ fun MarkdownTextField(
             for (spec in checkboxOverlaySpecs(state.text.toString())) {
                 val anchor = spec.anchorOffset.coerceIn(0, textLen - 1)
                 val box = lr.getBoundingBox(anchor)
-                val top = box.top.roundToInt()
-                val bottom = box.bottom.roundToInt()
-                val centerY = (top + bottom) / 2
+                val centerY = (box.top.roundToInt() + box.bottom.roundToInt()) / 2
 
                 Box(
                     modifier = Modifier.offset {
@@ -1111,47 +1105,44 @@ fun MarkdownTextField(
                         Checkbox(checked = spec.checked, onCheckedChange = null, modifier = Modifier.size(18.dp))
                     }
                 }
+            }
+        }
 
-                // Explicit ▲▼⇤⇥ buttons, not a swipe gesture -- a swipe zone
-                // wide enough to hit reliably also ate taps meant for placing
-                // a cursor in the todo text right next to it (this *is* the
-                // real editable text field, unlike reading mode's row, which
-                // is plain static Text with nothing underneath to conflict
-                // with). Explicit small buttons have a precise hit target
-                // instead of guessing at "was that a swipe or a tap".
-                if (onMoveLine != null || onShiftIndent != null) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.offset {
-                            IntOffset(
-                                containerWidthPx - iconsClusterWidthPx,
-                                centerY - iconSizePx / 2 - scrollState.value
-                            )
+        // One floating bubble, not one per line -- acts on whichever line
+        // the cursor currently sits on rather than needing to be positioned
+        // next to a specific row. Per-row buttons and a swipe gesture were
+        // both tried and both ate taps meant for placing a cursor in the
+        // todo text right next to them (unlike reading mode's row, plain
+        // static Text with nothing underneath to conflict with, this row's
+        // text *is* the real editable field). One fixed bubble sidesteps
+        // that entirely.
+        if (onShiftIndent != null || onMoveLine != null) {
+            val cursorLineIndex = remember(state.text, state.selection) {
+                var count = 0
+                val pos = state.selection.start.coerceIn(0, state.text.length)
+                for (i in 0 until pos) if (state.text[i] == '\n') count++
+                count
+            }
+            Surface(
+                shape = RoundedCornerShape(20.dp),
+                tonalElevation = 4.dp,
+                modifier = Modifier.align(Alignment.BottomEnd).imePadding().padding(12.dp)
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    if (onShiftIndent != null) {
+                        IconButton(onClick = { onShiftIndent(cursorLineIndex, -1) }) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Outdent")
                         }
-                    ) {
-                        if (onShiftIndent != null) {
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
-                                contentDescription = "Outdent",
-                                modifier = Modifier.clickable { onShiftIndent(spec.lineIndex, -1) }.size(22.dp)
-                            )
-                            Icon(
-                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
-                                contentDescription = "Indent",
-                                modifier = Modifier.clickable { onShiftIndent(spec.lineIndex, 1) }.size(22.dp)
-                            )
+                        IconButton(onClick = { onShiftIndent(cursorLineIndex, 1) }) {
+                            Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Indent")
                         }
-                        if (onMoveLine != null) {
-                            Icon(
-                                Icons.Filled.KeyboardArrowUp,
-                                contentDescription = "Move up",
-                                modifier = Modifier.clickable { onMoveLine(spec.lineIndex, -1) }.size(22.dp)
-                            )
-                            Icon(
-                                Icons.Filled.KeyboardArrowDown,
-                                contentDescription = "Move down",
-                                modifier = Modifier.clickable { onMoveLine(spec.lineIndex, 1) }.size(22.dp)
-                            )
+                    }
+                    if (onMoveLine != null) {
+                        IconButton(onClick = { onMoveLine(cursorLineIndex, -1) }) {
+                            Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up")
+                        }
+                        IconButton(onClick = { onMoveLine(cursorLineIndex, 1) }) {
+                            Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down")
                         }
                     }
                 }
