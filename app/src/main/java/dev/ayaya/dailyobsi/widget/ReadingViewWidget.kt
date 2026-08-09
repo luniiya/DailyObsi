@@ -38,6 +38,7 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import android.net.Uri
 import dev.ayaya.dailyobsi.Block
+import dev.ayaya.dailyobsi.CHECKBOX_LINE
 import dev.ayaya.dailyobsi.DailyNote
 import dev.ayaya.dailyobsi.VaultPrefs
 import dev.ayaya.dailyobsi.parseBlocks
@@ -64,6 +65,7 @@ class ReadingViewWidget : GlanceAppWidget() {
     override val stateDefinition = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        android.util.Log.d("DailyObsiWidget", "ReadingViewWidget.provideGlance: CALLED id=$id")
         val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
         val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
 
@@ -71,7 +73,8 @@ class ReadingViewWidget : GlanceAppWidget() {
             // Read but not otherwise used -- see the stateDefinition doc
             // comment above; this is purely what makes recomposition happen
             // on refresh at all.
-            currentState<Preferences>()
+            val stateForRecompose = currentState<Preferences>()
+            android.util.Log.d("DailyObsiWidget", "ReadingViewWidget content: RECOMPOSED id=$id state=$stateForRecompose")
 
             // Plain blocking calls, called directly and unconditionally on
             // every recomposition -- same pattern as TodoWidget.kt and
@@ -90,8 +93,13 @@ class ReadingViewWidget : GlanceAppWidget() {
                     ReadingSync.Loaded(file.name ?: "Today", parseBlocks(text), treeUri)
                 }
             }
+            val syncSummary = when (sync) {
+                is ReadingSync.Loaded -> "Loaded(title=${sync.title}, blocks=${sync.blocks.size}, checkedCount=${sync.blocks.count { it is Block.Line && CHECKBOX_LINE.matches(it.raw) && it.raw.contains("[x]", ignoreCase = true) }})"
+                else -> sync.toString()
+            }
+            android.util.Log.d("DailyObsiWidget", "ReadingViewWidget content: sync computed = $syncSummary")
 
-            val embeds by produceState(initialValue = emptyMap<String, GlanceEmbedImage>(), key1 = sync) {
+            val embeds by produceState(initialValue = emptyMap<String, ImageProvider>(), key1 = sync) {
                 value = if (sync is ReadingSync.Loaded) resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks) else emptyMap()
             }
 
@@ -125,7 +133,33 @@ class ReadingViewWidget : GlanceAppWidget() {
                                 ReadingWidgetMessage("Nothing here yet.")
                             } else {
                                 LazyColumn(modifier = GlanceModifier.fillMaxWidth()) {
-                                    items(sync.blocks.size) { i ->
+                                    // itemId derived from content (not just
+                                    // position) -- an experimental fix for a
+                                    // real, still-reproducing bug: list items
+                                    // specifically (not the header Text above)
+                                    // kept showing stale checkbox state after
+                                    // a confirmed-correct write + refresh,
+                                    // while non-list content updated fine.
+                                    // Glance's default itemId is position-only
+                                    // ("maintains scroll position through
+                                    // updates" per its own doc, nothing about
+                                    // content) -- RemoteViews list-backed
+                                    // widgets are documented to need an
+                                    // explicit notify when *content* at an
+                                    // existing position changes, not just a
+                                    // fresh RemoteViews push, and a stable
+                                    // per-position id with no content signal
+                                    // is exactly the shape of input that
+                                    // triggers that gap. Folding the block's
+                                    // own hashCode (content-derived, since
+                                    // Block.Line's raw text includes the
+                                    // checkbox mark) into the id means a
+                                    // content change looks like a genuinely
+                                    // different item at that position.
+                                    items(
+                                        count = sync.blocks.size,
+                                        itemId = { i -> (i.toLong() shl 20) xor (sync.blocks[i].hashCode().toLong() and 0xFFFFF) }
+                                    ) { i ->
                                         Column(modifier = GlanceModifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                                             GlanceMarkdownBlocks(listOf(sync.blocks[i]), embeds)
                                         }

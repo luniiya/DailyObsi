@@ -30,7 +30,7 @@ import androidx.documentfile.provider.DocumentFile
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import dev.ayaya.dailyobsi.widget.refreshAllWidgets
+import dev.ayaya.dailyobsi.widget.requestWidgetRefresh
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -170,11 +170,16 @@ fun DailyObsiApp(startInEditMode: Boolean = false, openSectionHeading: String? =
         text = newText
         scope.launch {
             withContext(Dispatchers.IO) { DailyNote.writeText(context, file.uri, newText) }
-            // All three widgets read from disk fresh on every recompose, so
-            // an in-app edit is just as capable of going stale on a placed
-            // widget as a widget-side tap is on another widget instance --
-            // refresh every widget class, not just TodoWidget.
-            refreshAllWidgets(context)
+            // All widgets read from disk fresh on every recompose, so an
+            // in-app edit is just as capable of going stale on a placed
+            // widget as a widget-side tap is on another widget instance.
+            // requestWidgetRefresh (debounced), not refreshAllWidgets
+            // directly -- a raw call per write is exactly what caused real,
+            // confirmed data-staleness under rapid repeated widget taps (see
+            // WidgetKeys.kt), and persist() itself already fires rapidly
+            // during typing/autosave, so it's just as exposed to the same
+            // race.
+            requestWidgetRefresh(context)
         }
     }
 
@@ -233,6 +238,26 @@ fun DailyObsiApp(startInEditMode: Boolean = false, openSectionHeading: String? =
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && editMode) persist(text)
+            // Reload from disk on resume. `text` is loaded exactly once, via
+            // LaunchedEffect(dailyUri) on cold start / folder pick -- nothing
+            // ever re-read it after that. The widgets write straight to the
+            // file, so backgrounding the app, tapping a widget checkbox/
+            // progress a few times, then foregrounding again left the in-app
+            // reading view showing the pre-tap state indefinitely, with no
+            // way to tell it apart from an actual desync. This is very
+            // likely most (maybe all) of what looked like a widget staleness
+            // bug during a long testing session: the widget always read the
+            // file fresh and was correct, but the in-app screenshot used as
+            // "ground truth" to judge it was itself stale, more so the
+            // longer testing went on and the more taps had accumulated since
+            // the app was last actually loaded. Skipped while actively
+            // editing (editMode) or in the section editor -- reloading over
+            // in-progress unsaved typing would blow it away; those already
+            // autosave/exit through their own paths.
+            if (event == Lifecycle.Event.ON_START && dailyUri != null && !editMode && editingSectionLine == null) {
+                android.util.Log.d("DailyObsiPerf", "ON_START: reloading $viewingDate from disk")
+                loadNote(viewingDate)
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }

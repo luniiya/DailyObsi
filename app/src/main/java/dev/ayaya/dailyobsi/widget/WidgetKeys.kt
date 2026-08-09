@@ -2,7 +2,10 @@ package dev.ayaya.dailyobsi.widget
 
 import android.content.Context
 import androidx.datastore.preferences.core.stringPreferencesKey
+import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
+import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 
 /**
@@ -33,14 +36,35 @@ val SELECTED_EMOJI_KEY = stringPreferencesKey("selected_emoji")
  * screen, whether the edit came from inside the app (MainActivity.persist)
  * or from a tap on a widget itself (checkbox toggle, progress +/-). Keeping
  * this in one place instead of each call site reaching for three separate
- * updateAll() calls is what makes it safe to add a fourth widget later
+ * updateAll() calls is what makes it safe to add another widget later
  * without hunting down every place that needed to know about it.
+ *
+ * Prefer [requestWidgetRefresh] over calling this directly from a widget
+ * action -- see its doc comment for why a raw, un-debounced call here is
+ * exactly what caused real, confirmed data-staleness bugs under rapid
+ * repeated taps.
  */
 suspend fun refreshAllWidgets(context: Context) {
-    TodoWidget().updateAll(context)
+    val tag = "DailyObsiWidget"
+    // updateAll() = manager.getGlanceIds(javaClass).forEach { update(context, it) } --
+    // if getGlanceIds() resolves to an empty list (its own internal
+    // provider->receiver mapping datastore not knowing about this class
+    // yet), the forEach silently does nothing and updateAll() still
+    // "returns" with no error at all. Logging the enumeration result
+    // directly (not just "updateAll() returned") is the only way to tell
+    // those two cases apart from logcat.
+    val manager = GlanceAppWidgetManager(context)
+    android.util.Log.d(tag, "refreshAllWidgets: starting")
+    val editIds = manager.getGlanceIds(EditShortcutWidget::class.java)
+    android.util.Log.d(tag, "refreshAllWidgets: EditShortcutWidget glanceIds=$editIds")
     EditShortcutWidget().updateAll(context)
+    val headingIds = manager.getGlanceIds(HeadingWidget::class.java)
+    android.util.Log.d(tag, "refreshAllWidgets: HeadingWidget glanceIds=$headingIds")
     HeadingWidget().updateAll(context)
+    val readingIds = manager.getGlanceIds(ReadingViewWidget::class.java)
+    android.util.Log.d(tag, "refreshAllWidgets: ReadingViewWidget glanceIds=$readingIds")
     ReadingViewWidget().updateAll(context)
+    android.util.Log.d(tag, "refreshAllWidgets: all done")
 }
 
 /**
@@ -55,6 +79,76 @@ suspend fun refreshAllWidgets(context: Context) {
  * so the second call computes its new content from a file that doesn't yet
  * include the first call's change -- and its own `writeText` then silently
  * overwrites (loses) that change entirely. `withLock { }` around each
- * action's full read-modify-write forces them to run one at a time instead.
+ * action's own read-modify-write (write only -- see [requestWidgetRefresh]
+ * for the refresh side, deliberately *not* held under this lock) forces
+ * writes to run one at a time instead.
  */
 val noteWriteMutex = Mutex()
+
+/**
+ * Round 1 of fixing "widget shows stale data after rapid taps" held
+ * [refreshAllWidgets] (plus a fixed settle delay) inside [noteWriteMutex]'s
+ * lock for every single tap. Wrong, and confirmed worse by the very next
+ * real-device test: since every tap's ActionCallback now blocked for the
+ * full delay before returning, tapping a progress-bar +/- rapidly (the
+ * reported case: "pressing plus 200 times and it still shows 0/4") made the
+ * widget feel completely dead, not just laggy -- each tap could only start
+ * once the previous one's artificial wait had fully elapsed.
+ *
+ * Round 2 replaced that with a `MutableSharedFlow.debounce(200)` collected
+ * on a detached, always-running `CoroutineScope(SupervisorJob() +
+ * Dispatchers.Default)`, fired via a non-suspend `tryEmit`. This looked
+ * right (individual taps stayed instant, a burst collapsed into one trailing
+ * refresh) and fixed the interleaved-write race it targeted, but a *harder*
+ * bug survived it and took direct on-device `adb shell input tap` + logcat
+ * tracing to actually pin down: recompose would silently never land at all
+ * -- not late, not stale, just never -- whenever a tap happened without
+ * `MainActivity` having been foregrounded recently. Confirmed by tapping a
+ * widget checkbox seconds after opening the app (full recompose landed
+ * within ~200ms) versus the identical tap 30+ seconds after backgrounding it
+ * (the write and the `refreshAllWidgets()` enumeration both completed and
+ * logged successfully, but no `provideGlance`/recompose ever followed, for
+ * any widget class, even after 40+ seconds of polling). Root cause: Glance's
+ * session runs on a `SessionWorker` (WorkManager, see AppWidgetSession.kt's
+ * own doc comment), and Android's background execution limits can defer
+ * WorkManager scheduling for an app with no current foreground
+ * activity/exemption. A widget tap's `ActionCallback.onAction` itself gets a
+ * legitimate temporary execution grant from the system (similar to a
+ * BroadcastReceiver) -- but Round 2's `tryEmit` handed the actual refresh
+ * off to a *detached* scope with no relationship to that grant at all, and
+ * by the time the 200ms debounce elapsed and that independent coroutine
+ * actually ran `refreshAllWidgets()`, it had nothing but the app's ordinary
+ * (possibly long-backgrounded, possibly throttled) process state to run
+ * under.
+ *
+ * The actual fix: make the debounce something each caller `suspend`s through
+ * as part of its *own* call, instead of firing an event at a detached
+ * collector. A monotonic generation counter replaces the SharedFlow: each
+ * call stamps the next generation, delays 200ms *inline*, and then only
+ * performs the real `refreshAllWidgets()` if no newer call has since
+ * superseded it (bailing out otherwise) -- collapsing a burst into one
+ * trailing refresh exactly as before, but the delay and the refresh both now
+ * run inside whichever coroutine the caller already had (an
+ * `ActionCallback.onAction`, or `MainActivity.persist()`'s `scope.launch`),
+ * inheriting whatever execution standing that context legitimately has
+ * instead of escaping it.
+ */
+private val refreshGeneration = AtomicLong(0)
+
+/** Call this from a widget action (or `MainActivity.persist()`) after
+ *  writing to the note, instead of calling [refreshAllWidgets] directly --
+ *  see the doc comment above [refreshGeneration] for why. Now `suspend`:
+ *  callers should call it directly (not fire-and-forget in a separate
+ *  scope), so the debounce wait and the eventual refresh both stay part of
+ *  the caller's own execution context. */
+suspend fun requestWidgetRefresh(context: Context) {
+    val myGeneration = refreshGeneration.incrementAndGet()
+    android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: requested gen=$myGeneration")
+    delay(200)
+    if (refreshGeneration.get() == myGeneration) {
+        android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: gen=$myGeneration is latest, refreshing now")
+        refreshAllWidgets(context)
+    } else {
+        android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: gen=$myGeneration superseded by ${refreshGeneration.get()}, skipping")
+    }
+}

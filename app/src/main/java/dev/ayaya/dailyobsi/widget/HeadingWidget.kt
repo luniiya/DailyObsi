@@ -58,6 +58,7 @@ class HeadingWidget : GlanceAppWidget() {
     override val stateDefinition = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
+        android.util.Log.d("DailyObsiWidget", "HeadingWidget.provideGlance: CALLED id=$id")
         val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
         val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
 
@@ -70,6 +71,7 @@ class HeadingWidget : GlanceAppWidget() {
             // here, recomposition never happens and everything below stays
             // frozen at whatever it was on first placement.
             val prefs = currentState<Preferences>()
+            android.util.Log.d("DailyObsiWidget", "HeadingWidget content: RECOMPOSED id=$id state=$prefs")
             val rawHeading = prefs[SELECTED_HEADING_KEY]
             val emoji = prefs[SELECTED_EMOJI_KEY]?.ifBlank { null } ?: DEFAULT_WIDGET_EMOJI
 
@@ -104,8 +106,9 @@ class HeadingWidget : GlanceAppWidget() {
                     }
                 }
             }
+            android.util.Log.d("DailyObsiWidget", "HeadingWidget content: sync computed = ${if (sync is HeadingSync.Loaded) "Loaded(title=${sync.title}, blocks=${sync.blocks.size})" else sync}")
 
-            val embeds by produceState(initialValue = emptyMap<String, GlanceEmbedImage>(), key1 = sync) {
+            val embeds by produceState(initialValue = emptyMap<String, ImageProvider>(), key1 = sync) {
                 value = if (sync is HeadingSync.Loaded) resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks) else emptyMap()
             }
 
@@ -130,7 +133,15 @@ class HeadingWidget : GlanceAppWidget() {
                                 HeadingWidgetMessage("Nothing here yet.")
                             } else {
                                 LazyColumn(modifier = GlanceModifier.fillMaxWidth()) {
-                                    items(sync.blocks.size) { i ->
+                                    // See ReadingViewWidget's identical comment
+                                    // -- content-derived itemId, not just
+                                    // position, targeting a real "list items
+                                    // stay stale after a confirmed-correct
+                                    // write" bug.
+                                    items(
+                                        count = sync.blocks.size,
+                                        itemId = { i -> (i.toLong() shl 20) xor (sync.blocks[i].hashCode().toLong() and 0xFFFFF) }
+                                    ) { i ->
                                         Column(modifier = GlanceModifier.fillMaxWidth().padding(horizontal = 12.dp)) {
                                             GlanceMarkdownBlocks(listOf(sync.blocks[i]), embeds)
                                         }

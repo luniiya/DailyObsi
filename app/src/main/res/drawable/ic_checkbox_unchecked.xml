@@ -1,0 +1,12 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="24dp"
+    android:height="24dp"
+    android:viewportWidth="24"
+    android:viewportHeight="24">
+    <!-- Standard Material "check_box_outline_blank" glyph: a rounded square
+         outline (outer square minus an inset square, same nonzero winding
+         cutout as the checked variant). -->
+    <path
+        android:fillColor="#FF000000"
+        android:pathData="M19,5v14H5V5h14M19,3H5c-1.1,0 -2,0.9 -2,2v14c0,1.1 0.9,2 2,2h14c1.1,0 2,-0.9 2,-2V5c0,-1.1 -0.9,-2 -2,-2z" />
+</vector>
