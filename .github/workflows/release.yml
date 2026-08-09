@@ -1,0 +1,73 @@
+name: Release APK
+
+# Builds a signed release APK and attaches it to a GitHub Release.
+# Runs on pushing a version tag (v1.0, v1.1, ...), or manually via the
+# Actions tab ("Run workflow") for a one-off build without tagging.
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # app/build.gradle.kts pins this exact build-tools version (see
+      # CLAUDE.md) -- it's not always what's pre-baked into the runner image.
+      - name: Install pinned build-tools/platform
+        run: sdkmanager "platforms;android-35" "build-tools;37.0.0"
+
+      # keystore.properties + the .jks are gitignored (see CLAUDE.md's
+      # Signing section) and never committed -- reconstructed here from
+      # repo secrets. If those secrets aren't set yet, this step still
+      # succeeds (writes an incomplete/empty keystore.properties) but the
+      # build below then produces an unsigned APK -- add the three secrets
+      # (see repo README/CLAUDE.md) to get a real signed, installable one.
+      - name: Reconstruct signing key from secrets
+        env:
+          KEYSTORE_BASE64: ${{ secrets.RELEASE_KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.RELEASE_KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.RELEASE_KEY_ALIAS }}
+        run: |
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            echo "$KEYSTORE_BASE64" | base64 -d > release-keystore.jks
+            cat > keystore.properties <<EOF
+          storeFile=release-keystore.jks
+          storePassword=$KEYSTORE_PASSWORD
+          keyAlias=$KEY_ALIAS
+          keyPassword=$KEYSTORE_PASSWORD
+          EOF
+          else
+            echo "::warning::RELEASE_KEYSTORE_BASE64 secret not set -- building an UNSIGNED release APK."
+          fi
+
+      - name: Build release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --console=plain
+
+      - name: Upload APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: dailyobsi-release
+          path: app/build/outputs/apk/release/*.apk
+
+      - name: Create GitHub Release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: app/build/outputs/apk/release/*.apk
+          generate_release_notes: true
