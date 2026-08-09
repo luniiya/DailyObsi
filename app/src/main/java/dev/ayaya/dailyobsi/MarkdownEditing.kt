@@ -343,6 +343,62 @@ private val markdownOutputTransformation = OutputTransformation {
     }
 }
 
+/** Describes, for [resolveCursorFollow], what actually happened to the line
+ *  the cursor was on so its next position can be computed correctly instead
+ *  of just preserving a raw character offset (which stays at the same
+ *  *screen* position even when the content there changed out from under
+ *  it -- see [MarkdownTextField]'s bubble bug). */
+private sealed class PendingCursorFollow {
+    /** The cursor's own line *content* relocated from [fromLine] to [toLine]
+     *  unchanged (moveLine) -- offset within the line carries over as-is. */
+    data class MovedLine(val fromLine: Int, val toLine: Int) : PendingCursorFollow()
+    /** The cursor's line stayed at [lineIndex] but gained/lost characters at
+     *  its own start (shiftIndent) -- offset within the line shifts by
+     *  whatever that line's length actually changed by. */
+    data class ReindentedLine(val lineIndex: Int) : PendingCursorFollow()
+}
+
+/** Computes where the cursor should land in [newText] given it was at
+ *  [oldOffset] in [oldText], honoring [pending] if set (see
+ *  [PendingCursorFollow]) or just clamping the raw offset otherwise (the
+ *  right behavior for changes with no relevant line semantics, e.g.
+ *  switching notes/sections). */
+private fun resolveCursorFollow(oldText: String, oldOffset: Int, newText: String, pending: PendingCursorFollow?): Int {
+    if (pending == null) return oldOffset.coerceIn(0, newText.length)
+
+    val oldLines = oldText.split("\n")
+    val newLines = newText.split("\n")
+    fun lineStart(lines: List<String>, idx: Int): Int = lines.take(idx).sumOf { it.length + 1 }
+
+    var acc = 0
+    var oldLineIdx = oldLines.lastIndex
+    for ((i, l) in oldLines.withIndex()) {
+        if (oldOffset <= acc + l.length) { oldLineIdx = i; break }
+        acc += l.length + 1
+    }
+    val offsetWithinOldLine = oldOffset - lineStart(oldLines, oldLineIdx)
+
+    return when (pending) {
+        is PendingCursorFollow.MovedLine -> {
+            if (pending.fromLine != oldLineIdx || pending.toLine !in newLines.indices) {
+                oldOffset.coerceIn(0, newText.length)
+            } else {
+                (lineStart(newLines, pending.toLine) + offsetWithinOldLine).coerceIn(0, newText.length)
+            }
+        }
+        is PendingCursorFollow.ReindentedLine -> {
+            if (pending.lineIndex != oldLineIdx || pending.lineIndex !in newLines.indices) {
+                oldOffset.coerceIn(0, newText.length)
+            } else {
+                val oldLen = oldLines[pending.lineIndex].length
+                val newLen = newLines[pending.lineIndex].length
+                val adjusted = (offsetWithinOldLine + (newLen - oldLen)).coerceIn(0, newLen)
+                (lineStart(newLines, pending.lineIndex) + adjusted).coerceIn(0, newText.length)
+            }
+        }
+    }
+}
+
 /** Shared raw-markdown editor for both main edit mode and the section editor.
  *  Built on the newer TextFieldState-based BasicTextField
  *  (androidx.compose.foundation.text.input) specifically for two things a
@@ -376,26 +432,33 @@ fun MarkdownTextField(
 ) {
     val state = rememberTextFieldState(initialText = value)
 
+    // Set by the bubble's button handlers right before calling onMoveLine/
+    // onShiftIndent, so the resync below (which only sees "the text changed
+    // from X to Y", not *why*) knows how to carry the cursor across that
+    // specific change instead of just preserving its raw character offset.
+    // BUG FIXED HERE (round 2): preserving the raw offset was itself the
+    // previous fix's bug -- swapping two same-length lines leaves the cursor
+    // sitting at the same *screen position*, which after the swap shows the
+    // *other* line's content, not the text the cursor was actually on.
+    var pendingCursorFollow by remember { mutableStateOf<PendingCursorFollow?>(null) }
+
     // Resync when `value` changes for a reason other than this field's own
-    // edit (switching notes/sections, or -- importantly -- the ⇤⇥▲▼ bubble
-    // below, which mutates `value` via callbacks that go around this field's
-    // own onValueChange entirely). Our own typing already round-trips back
-    // to an equal `value` on the next recomposition, so this only actually
-    // fires for those external changes.
-    //
-    // BUG FIXED HERE: this used to call setTextAndPlaceCursorAtEnd(value)
-    // unconditionally, which -- since every ⇤⇥▲▼ tap changes `value` this
-    // way -- slammed the cursor (and the view, which follows it) to the very
-    // end of the document after every single bubble tap. Preserving the
-    // prior cursor *offset* (clamped to the new length) instead keeps the
-    // view roughly where the user was looking.
+    // edit (switching notes/sections, or the ⇤⇥▲▼ bubble, which mutates
+    // `value` via callbacks that go around this field's own onValueChange
+    // entirely). Our own typing already round-trips back to an equal `value`
+    // on the next recomposition, so this only actually fires for those
+    // external changes.
     LaunchedEffect(value) {
         if (state.text.toString() != value) {
-            val preservedOffset = state.selection.start.coerceIn(0, value.length)
-            Log.d(LOG_TAG, "external value change (len ${state.text.length} -> ${value.length}), preserving cursor offset $preservedOffset")
+            val oldText = state.text.toString()
+            val oldOffset = state.selection.start.coerceIn(0, oldText.length)
+            val pending = pendingCursorFollow
+            pendingCursorFollow = null
+            val newOffset = resolveCursorFollow(oldText, oldOffset, value, pending)
+            Log.d(LOG_TAG, "resync: cursor $oldOffset -> $newOffset (pending=$pending, len ${oldText.length} -> ${value.length})")
             state.edit {
                 replace(0, length, value)
-                placeCursorBeforeCharAt(preservedOffset)
+                placeCursorBeforeCharAt(newOffset)
             }
         }
     }
@@ -468,12 +531,14 @@ fun MarkdownTextField(
                         if (onShiftIndent != null) {
                             IconButton(onClick = {
                                 Log.d(LOG_TAG, "bubble: outdent line $cursorLineIndex")
+                                pendingCursorFollow = PendingCursorFollow.ReindentedLine(cursorLineIndex)
                                 onShiftIndent(cursorLineIndex, -1)
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Outdent", modifier = Modifier.size(18.dp))
                             }
                             IconButton(onClick = {
                                 Log.d(LOG_TAG, "bubble: indent line $cursorLineIndex")
+                                pendingCursorFollow = PendingCursorFollow.ReindentedLine(cursorLineIndex)
                                 onShiftIndent(cursorLineIndex, 1)
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowRight, contentDescription = "Indent", modifier = Modifier.size(18.dp))
@@ -482,12 +547,14 @@ fun MarkdownTextField(
                         if (onMoveLine != null) {
                             IconButton(onClick = {
                                 Log.d(LOG_TAG, "bubble: move up line $cursorLineIndex")
+                                pendingCursorFollow = PendingCursorFollow.MovedLine(cursorLineIndex, cursorLineIndex - 1)
                                 onMoveLine(cursorLineIndex, -1)
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.size(18.dp))
                             }
                             IconButton(onClick = {
                                 Log.d(LOG_TAG, "bubble: move down line $cursorLineIndex")
+                                pendingCursorFollow = PendingCursorFollow.MovedLine(cursorLineIndex, cursorLineIndex + 1)
                                 onMoveLine(cursorLineIndex, 1)
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Filled.KeyboardArrowDown, contentDescription = "Move down", modifier = Modifier.size(18.dp))
