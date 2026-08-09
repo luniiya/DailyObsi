@@ -1,0 +1,8 @@
+<resources>
+    <!-- Light variant (res/values-night/themes.xml supplies the dark one):
+         there's no framework "DayNight" style without AppCompat/Material
+         Components, so the values/values-night qualifier split IS the
+         day/night switch here. enableEdgeToEdge() in MainActivity makes the
+         status/nav bars transparent on top of whichever this resolves to. -->
+    <style name="Theme.DailyObsi" parent="android:Theme.DeviceDefault.Light.NoActionBar" />
+</resources>

@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">DailyObsi</string>
+    <string name="widget_description">Today\'s Obsidian to-do list</string>
+</resources>

@@ -1,0 +1,24 @@
+# Gradle
+.gradle/
+build/
+app/build/
+
+# Local machine config (sdk.dir is machine-specific)
+local.properties
+
+# Signing key material -- never commit
+keystore.properties
+*.jks
+*.keystore
+
+# Android Studio / IDE (not used here, but harmless to ignore)
+.idea/
+*.iml
+.cxx/
+captures/
+
+# Logs
+*.log
+
+# OS cruft
+.DS_Store
