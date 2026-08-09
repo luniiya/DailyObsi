@@ -1,4 +1,4 @@
-@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+@file:OptIn(ExperimentalFoundationApi::class)
 
 package dev.ayaya.dailyobsi
 
@@ -23,14 +23,10 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.ExperimentalLayoutApi
-import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.imePadding
-import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
@@ -39,18 +35,17 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
+import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Checkbox
-import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -934,14 +929,16 @@ fun highlightMarkdownForEdit(raw: String): AnnotatedString = buildAnnotatedStrin
 private val ORDERED_LIST_PREFIX = Regex("""^(\s*)(\d+)\.(\s+)""")
 
 /** On a plain Enter keystroke (exactly one "\n" inserted, nothing replaced)
- *  whose line is an ordered-list item ("1. text"), continues the list on the
- *  new line with "{n+1}. " -- or, if that item's text was empty, strips the
- *  marker instead (Enter on a blank "N. " exits the list rather than
- *  incrementing forever). Any other edit (typing, paste, deletion, IME
+ *  whose line is a list item, continues the list on the new line -- ordered
+ *  ("1. text" -> "{n+1}. ") or checkbox ("- [ ] text"/"- [x] text" -> a fresh
+ *  unchecked "- [ ] ", regardless of whether the item that was split off was
+ *  checked). Either way, if that item's own text was empty, strips the
+ *  marker instead (Enter on a blank item exits the list rather than
+ *  continuing forever). Any other edit (typing, paste, deletion, IME
  *  composition, multi-change edits) passes through untouched. Built on
  *  [InputTransformation] rather than diffing values by hand: [changes] gives
  *  this directly (a single collapsed original range, length-1 new range). */
-private val orderedListInputTransformation = InputTransformation {
+private val listContinuationInputTransformation = InputTransformation {
     if (changes.changeCount != 1) return@InputTransformation
     val newRange = changes.getRange(0)
     val oldRange = changes.getOriginalRange(0)
@@ -952,15 +949,29 @@ private val orderedListInputTransformation = InputTransformation {
     val insertPos = newRange.start
     val lineStart = full.lastIndexOf('\n', insertPos - 1) + 1
     val currentLine = full.substring(lineStart, insertPos)
-    val m = ORDERED_LIST_PREFIX.find(currentLine) ?: return@InputTransformation
-    val contentAfterMarker = currentLine.substring(m.range.last + 1)
+
+    val orderedMatch = ORDERED_LIST_PREFIX.find(currentLine)
+    val checkboxMatch = if (orderedMatch == null) CHECKBOX_LINE.matchEntire(currentLine) else null
+
+    val marker: String
+    val contentAfterMarker: String
+    when {
+        orderedMatch != null -> {
+            val num = orderedMatch.groupValues[2].toIntOrNull() ?: return@InputTransformation
+            marker = "${orderedMatch.groupValues[1]}${num + 1}. "
+            contentAfterMarker = currentLine.substring(orderedMatch.range.last + 1)
+        }
+        checkboxMatch != null -> {
+            marker = "${checkboxMatch.groupValues[1]} ${checkboxMatch.groupValues[3]}"
+            contentAfterMarker = checkboxMatch.groupValues[4]
+        }
+        else -> return@InputTransformation
+    }
 
     if (contentAfterMarker.isBlank()) {
         delete(lineStart, insertPos)
         placeCursorAfterCharAt(lineStart)
     } else {
-        val num = m.groupValues[2].toIntOrNull() ?: return@InputTransformation
-        val marker = "${m.groupValues[1]}${num + 1}. "
         insert(insertPos + 1, marker)
         placeCursorAfterCharAt(insertPos + marker.length)
     }
@@ -1064,7 +1075,9 @@ fun MarkdownTextField(
     val density = LocalDensity.current
     val checkboxSizePx = with(density) { 18.dp.roundToPx() }
     val iconSizePx = with(density) { 22.dp.roundToPx() }
-    val iconsClusterWidthPx = iconSizePx * 2 + with(density) { 8.dp.roundToPx() }
+    // Up to 4 icons (⇤⇥▲▼) depending on which callbacks were actually passed.
+    val iconCount = (if (onShiftIndent != null) 2 else 0) + (if (onMoveLine != null) 2 else 0)
+    val iconsClusterWidthPx = iconSizePx * iconCount + with(density) { 8.dp.roundToPx() }
 
     Box(modifier = modifier.onSizeChanged { containerWidthPx = it.width }) {
         BasicTextField(
@@ -1075,7 +1088,7 @@ fun MarkdownTextField(
             cursorBrush = cursorBrush,
             scrollState = scrollState,
             onTextLayout = { layoutResult = it() },
-            inputTransformation = orderedListInputTransformation,
+            inputTransformation = listContinuationInputTransformation,
             outputTransformation = markdownOutputTransformation,
         )
 
@@ -1099,25 +1112,14 @@ fun MarkdownTextField(
                     }
                 }
 
-                if (onShiftIndent != null) {
-                    // Scoped to roughly the checkbox's own area, NOT the full
-                    // row -- unlike reading mode's row (plain static Text,
-                    // nothing to conflict with), the rest of this row *is* the
-                    // real editable text field underneath. A full-width swipe
-                    // zone here silently ate every tap meant to place a
-                    // cursor in the todo text, since it sat on top of it.
-                    Box(
-                        modifier = Modifier
-                            .offset { IntOffset(box.left.roundToInt(), top - scrollState.value) }
-                            .size(
-                                width = with(density) { (checkboxSizePx * 2).toDp() },
-                                height = with(density) { (bottom - top).toDp() }
-                            )
-                            .pointerInput(spec.lineIndex) { detectSwipeToIndent(spec.lineIndex, onShiftIndent) }
-                    )
-                }
-
-                if (onMoveLine != null) {
+                // Explicit ▲▼⇤⇥ buttons, not a swipe gesture -- a swipe zone
+                // wide enough to hit reliably also ate taps meant for placing
+                // a cursor in the todo text right next to it (this *is* the
+                // real editable text field, unlike reading mode's row, which
+                // is plain static Text with nothing underneath to conflict
+                // with). Explicit small buttons have a precise hit target
+                // instead of guessing at "was that a swipe or a tap".
+                if (onMoveLine != null || onShiftIndent != null) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         modifier = Modifier.offset {
@@ -1127,38 +1129,32 @@ fun MarkdownTextField(
                             )
                         }
                     ) {
-                        Icon(
-                            Icons.Filled.KeyboardArrowUp,
-                            contentDescription = "Move up",
-                            modifier = Modifier.clickable { onMoveLine(spec.lineIndex, -1) }.size(22.dp)
-                        )
-                        Icon(
-                            Icons.Filled.KeyboardArrowDown,
-                            contentDescription = "Move down",
-                            modifier = Modifier.clickable { onMoveLine(spec.lineIndex, 1) }.size(22.dp)
-                        )
+                        if (onShiftIndent != null) {
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowLeft,
+                                contentDescription = "Outdent",
+                                modifier = Modifier.clickable { onShiftIndent(spec.lineIndex, -1) }.size(22.dp)
+                            )
+                            Icon(
+                                Icons.AutoMirrored.Filled.KeyboardArrowRight,
+                                contentDescription = "Indent",
+                                modifier = Modifier.clickable { onShiftIndent(spec.lineIndex, 1) }.size(22.dp)
+                            )
+                        }
+                        if (onMoveLine != null) {
+                            Icon(
+                                Icons.Filled.KeyboardArrowUp,
+                                contentDescription = "Move up",
+                                modifier = Modifier.clickable { onMoveLine(spec.lineIndex, -1) }.size(22.dp)
+                            )
+                            Icon(
+                                Icons.Filled.KeyboardArrowDown,
+                                contentDescription = "Move down",
+                                modifier = Modifier.clickable { onMoveLine(spec.lineIndex, 1) }.size(22.dp)
+                            )
+                        }
                     }
                 }
-            }
-        }
-
-        // A small bubble anchored above the keyboard (right side, so it
-        // doesn't sit in the way) to insert a new checkbox line at the
-        // cursor -- only while the keyboard's actually up, so it's not a
-        // permanent fixture cluttering the screen.
-        if (WindowInsets.isImeVisible) {
-            SmallFloatingActionButton(
-                onClick = {
-                    state.edit {
-                        val cursor = selection.start
-                        val marker = "- [ ] "
-                        insert(cursor, "\n$marker")
-                        placeCursorAfterCharAt(cursor + 1 + marker.length)
-                    }
-                },
-                modifier = Modifier.align(Alignment.BottomEnd).imePadding().padding(12.dp)
-            ) {
-                Icon(Icons.Filled.Add, contentDescription = "Insert checkbox")
             }
         }
     }
