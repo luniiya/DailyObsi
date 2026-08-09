@@ -1,4 +1,19 @@
 <resources>
     <string name="app_name">DailyObsi</string>
+
+    <!-- android:label on each widget's receiver is what the launcher's
+         widget picker actually shows as the bold title for each entry (the
+         *_widget_description strings below are the subtitle). Without a
+         distinct label here, every widget falls back to the application
+         label and all four show up as just "DailyObsi" in the picker,
+         indistinguishable from one another. -->
+    <string name="todo_widget_label">Checklist</string>
+    <string name="edit_shortcut_widget_label">Edit Heading</string>
+    <string name="heading_widget_label">One Heading</string>
+    <string name="reading_view_widget_label">Full Note</string>
+
     <string name="widget_description">Today\'s Obsidian to-do list</string>
+    <string name="edit_shortcut_widget_description">Jump straight to editing one heading of today\'s note</string>
+    <string name="heading_widget_description">Shows one heading of today\'s note</string>
+    <string name="reading_view_widget_description">Shows the whole reading view of today\'s note</string>
 </resources>

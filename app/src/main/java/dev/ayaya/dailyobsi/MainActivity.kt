@@ -24,11 +24,10 @@ import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.documentfile.provider.DocumentFile
-import androidx.glance.appwidget.updateAll
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-import dev.ayaya.dailyobsi.widget.TodoWidget
+import dev.ayaya.dailyobsi.widget.refreshAllWidgets
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -36,8 +35,25 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Set by the edit-view shortcut widget's actionStartActivity so this
+         *  launch lands straight in edit mode for today's note instead of the
+         *  reading-mode default -- see DailyObsiApp's startInEditMode param. */
+        const val EXTRA_OPEN_EDIT_MODE = "open_edit_mode"
+
+        /** Set by EditShortcutWidget's actionStartActivity to the literal raw
+         *  header line text (e.g. "## Health") it was configured with -- see
+         *  DailyObsiApp's openSectionHeading param. Carries the raw line
+         *  (not a line index) since the widget's own selection is stored the
+         *  same way, for the same reason: line indices go stale the instant
+         *  the note is a fresh file next day. */
+        const val EXTRA_OPEN_SECTION_HEADING = "open_section_heading"
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        val openEditMode = intent.getBooleanExtra(EXTRA_OPEN_EDIT_MODE, false)
+        val openSectionHeading = intent.getStringExtra(EXTRA_OPEN_SECTION_HEADING)
         // Lets the system draw transparent, theme-matched status/nav bars
         // instead of the old opaque light-theme scrim -- without this the
         // bars stayed solid white/light regardless of app theme or dark mode.
@@ -73,7 +89,7 @@ class MainActivity : ComponentActivity() {
                             WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
                         )
                     ) {
-                        DailyObsiApp()
+                        DailyObsiApp(startInEditMode = openEditMode, openSectionHeading = openSectionHeading)
                     }
                 }
             }
@@ -83,7 +99,7 @@ class MainActivity : ComponentActivity() {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun DailyObsiApp() {
+fun DailyObsiApp(startInEditMode: Boolean = false, openSectionHeading: String? = null) {
     val context = androidx.compose.ui.platform.LocalContext.current
     val scope = rememberCoroutineScope()
 
@@ -151,7 +167,11 @@ fun DailyObsiApp() {
         text = newText
         scope.launch {
             withContext(Dispatchers.IO) { DailyNote.writeText(context, file.uri, newText) }
-            TodoWidget().updateAll(context)
+            // All three widgets read from disk fresh on every recompose, so
+            // an in-app edit is just as capable of going stale on a placed
+            // widget as a widget-side tap is on another widget instance --
+            // refresh every widget class, not just TodoWidget.
+            refreshAllWidgets(context)
         }
     }
 
@@ -179,7 +199,21 @@ fun DailyObsiApp() {
         editingSectionLine = null
     }
 
-    LaunchedEffect(dailyUri) { if (dailyUri != null) loadNoteSuspend(LocalDate.now()) }
+    LaunchedEffect(dailyUri) {
+        if (dailyUri != null) {
+            loadNoteSuspend(LocalDate.now())
+            if (startInEditMode) editMode = true
+            // Widget 1 (EditShortcutWidget) passes the literal raw header
+            // line it was configured with -- match it verbatim against
+            // today's note (not by a stored line index, which would go
+            // stale the instant the note is a fresh file next day) and open
+            // the section editor for whichever line actually matches, if any.
+            if (openSectionHeading != null) {
+                val headerLineIndex = text.lines().indexOf(openSectionHeading)
+                if (headerLineIndex != -1) openSectionEditor(headerLineIndex)
+            }
+        }
+    }
 
     LaunchedEffect(editMode) {
         if (editMode) {

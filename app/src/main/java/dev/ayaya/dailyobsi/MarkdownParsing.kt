@@ -34,7 +34,12 @@ val attachmentUriCache = mutableMapOf<String, Uri?>()
 
 val HIGHLIGHT_YELLOW = Color(0x66FFEB3B)
 val CODE_BG = Color(0x33808080)
-val LINK_COLOR = Color(0xFF4A90D9)
+// No hardcoded LINK_COLOR anymore -- link color follows the current Material
+// You dynamic theme accent instead (MaterialTheme.colorScheme.primary in-app,
+// GlanceTheme.colors.primary in the widgets), resolved at each composable
+// call site and threaded down into the non-composable inline-parsing
+// functions. A real reported bug (links rendering a fixed blue regardless of
+// system theme) is what prompted removing this rather than just not using it.
 val MUTED = Color(0xFF9E9E9E)
 val CHECKED_COLOR = Color(0xFF4CAF50)
 

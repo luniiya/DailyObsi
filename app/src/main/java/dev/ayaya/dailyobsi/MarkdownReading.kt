@@ -42,6 +42,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
@@ -122,8 +123,15 @@ private suspend fun PointerInputScope.detectSwipeToIndent(lineIndex: Int, onShif
  *  matched content so nesting (e.g. bold wrapping a highlight) composes.
  *  `![[embeds]]` are handled as a fallback text placeholder here -- a
  *  standalone embed line is rendered as a real image at the block level
- *  instead (see [MarkdownLine] / [EmbedImage]). */
-private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
+ *  instead (see [MarkdownLine] / [EmbedImage]). [linkColor] is threaded
+ *  through (not the old hardcoded LINK_COLOR constant) so both `[[wikilinks]]`
+ *  and `[text](url)` links follow the current Material You dynamic theme
+ *  color instead of a fixed blue -- a real reported bug (links showing a
+ *  hardcoded blue when the system/theme accent was a different hue
+ *  entirely) fixed by resolving MaterialTheme.colorScheme.primary once at
+ *  the composable call site (see MarkdownLine's parseInline calls) and
+ *  passing it down, since this function itself isn't composable. */
+private fun AnnotatedString.Builder.appendMarkdownInline(raw: String, linkColor: Color) {
     var i = 0
     val n = raw.length
     while (i < n) {
@@ -132,7 +140,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
             val endTag = raw.indexOf("</mark>", i)
             if (closeTag != -1 && endTag != -1 && closeTag < endTag) {
                 val color = highlightColorFor(raw.substring(i, closeTag))
-                withStyle(SpanStyle(background = color)) { appendMarkdownInline(raw.substring(closeTag + 1, endTag)) }
+                withStyle(SpanStyle(background = color)) { appendMarkdownInline(raw.substring(closeTag + 1, endTag), linkColor) }
                 i = endTag + "</mark>".length
                 continue
             }
@@ -140,7 +148,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
         if (raw.startsWith("==", i)) {
             val end = raw.indexOf("==", i + 2)
             if (end > i + 2) {
-                withStyle(SpanStyle(background = HIGHLIGHT_YELLOW)) { appendMarkdownInline(raw.substring(i + 2, end)) }
+                withStyle(SpanStyle(background = HIGHLIGHT_YELLOW)) { appendMarkdownInline(raw.substring(i + 2, end), linkColor) }
                 i = end + 2
                 continue
             }
@@ -149,7 +157,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
             val end = raw.indexOf("***", i + 3)
             if (end > i + 3) {
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
-                    appendMarkdownInline(raw.substring(i + 3, end))
+                    appendMarkdownInline(raw.substring(i + 3, end), linkColor)
                 }
                 i = end + 3
                 continue
@@ -159,7 +167,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
             val delim = raw.substring(i, i + 2)
             val end = raw.indexOf(delim, i + 2)
             if (end > i + 2) {
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendMarkdownInline(raw.substring(i + 2, end)) }
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendMarkdownInline(raw.substring(i + 2, end), linkColor) }
                 i = end + 2
                 continue
             }
@@ -168,7 +176,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
             val end = raw.indexOf("~~", i + 2)
             if (end > i + 2) {
                 withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
-                    appendMarkdownInline(raw.substring(i + 2, end))
+                    appendMarkdownInline(raw.substring(i + 2, end), linkColor)
                 }
                 i = end + 2
                 continue
@@ -188,7 +196,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
             val delim = raw[i]
             val end = raw.indexOf(delim, i + 1)
             if (end > i + 1) {
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendMarkdownInline(raw.substring(i + 1, end)) }
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendMarkdownInline(raw.substring(i + 1, end), linkColor) }
                 i = end + 1
                 continue
             }
@@ -207,7 +215,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
             val end = raw.indexOf("]]", i + 2)
             if (end != -1) {
                 val display = raw.substring(i + 2, end).substringAfterLast('|')
-                withStyle(SpanStyle(color = LINK_COLOR)) { append(display) }
+                withStyle(SpanStyle(color = linkColor)) { append(display) }
                 i = end + 2
                 continue
             }
@@ -221,7 +229,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
                     withLink(
                         LinkAnnotation.Url(
                             url,
-                            TextLinkStyles(style = SpanStyle(color = LINK_COLOR, textDecoration = TextDecoration.Underline))
+                            TextLinkStyles(style = SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline))
                         )
                     ) { append(raw.substring(i + 1, textEnd)) }
                     i = urlEnd + 1
@@ -234,7 +242,7 @@ private fun AnnotatedString.Builder.appendMarkdownInline(raw: String) {
     }
 }
 
-private fun parseInline(raw: String): AnnotatedString = buildAnnotatedString { appendMarkdownInline(raw) }
+private fun parseInline(raw: String, linkColor: Color): AnnotatedString = buildAnnotatedString { appendMarkdownInline(raw, linkColor) }
 
 @Composable
 fun MarkdownView(
@@ -315,6 +323,11 @@ private fun MarkdownLine(
     onToggleHeaderCollapse: (Int) -> Unit,
     onEditSection: (Int) -> Unit,
 ) {
+    // Resolved once here (Material You dynamic accent, not the old hardcoded
+    // LINK_COLOR blue) and threaded into every parseInline call below --
+    // appendMarkdownInline itself isn't composable, so it can't read
+    // MaterialTheme directly.
+    val linkColor = MaterialTheme.colorScheme.primary
     val checkboxMatch = CHECKBOX_LINE.matchEntire(line)
     val embedMatch = EMBED_LINE.matchEntire(line.trim())
     when {
@@ -349,7 +362,7 @@ private fun MarkdownLine(
                     )
                 }
                 Text(
-                    parseInline(checkboxMatch.groupValues[4]),
+                    parseInline(checkboxMatch.groupValues[4], linkColor),
                     style = MaterialTheme.typography.bodyLarge,
                     // Zeroing the checkbox's touch target above also zeroed
                     // its built-in padding, so text was sitting flush against
@@ -409,7 +422,7 @@ private fun MarkdownLine(
                     .padding(top = 12.dp, bottom = 4.dp)
             ) {
                 Text(
-                    parseInline(m.groupValues[3]),
+                    parseInline(m.groupValues[3], linkColor),
                     style = style,
                     fontWeight = FontWeight.Bold,
                     color = headerColorFor(level),
@@ -434,7 +447,7 @@ private fun MarkdownLine(
         BLOCKQUOTE.matchEntire(line) != null -> {
             val m = BLOCKQUOTE.matchEntire(line)!!
             Text(
-                parseInline(m.groupValues[2]),
+                parseInline(m.groupValues[2], linkColor),
                 style = MaterialTheme.typography.bodyLarge,
                 fontStyle = FontStyle.Italic,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -447,7 +460,7 @@ private fun MarkdownLine(
             val indent = indentLevel(m.groupValues[1])
             Row(modifier = Modifier.fillMaxWidth().padding(start = (indent * 20).dp, top = 2.dp, bottom = 2.dp)) {
                 Text("${m.groupValues[2]}.", modifier = Modifier.padding(end = 6.dp))
-                Text(parseInline(m.groupValues[3]), style = MaterialTheme.typography.bodyLarge)
+                Text(parseInline(m.groupValues[3], linkColor), style = MaterialTheme.typography.bodyLarge)
             }
         }
 
@@ -456,12 +469,12 @@ private fun MarkdownLine(
             val indent = indentLevel(m.groupValues[1])
             Row(modifier = Modifier.fillMaxWidth().padding(start = (indent * 20).dp, top = 2.dp, bottom = 2.dp)) {
                 Text("•", modifier = Modifier.padding(end = 6.dp))
-                Text(parseInline(m.groupValues[2]), style = MaterialTheme.typography.bodyLarge)
+                Text(parseInline(m.groupValues[2], linkColor), style = MaterialTheme.typography.bodyLarge)
             }
         }
 
         else -> Text(
-            parseInline(line),
+            parseInline(line, linkColor),
             style = MaterialTheme.typography.bodyLarge,
             modifier = Modifier.padding(vertical = 2.dp)
         )

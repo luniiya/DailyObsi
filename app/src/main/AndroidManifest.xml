@@ -20,7 +20,8 @@
 
         <receiver
             android:name=".widget.TodoWidgetReceiver"
-            android:exported="false">
+            android:exported="false"
+            android:label="@string/todo_widget_label">
             <intent-filter>
                 <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
             </intent-filter>
@@ -28,6 +29,56 @@
                 android:name="android.appwidget.provider"
                 android:resource="@xml/todo_widget_info" />
         </receiver>
+
+        <receiver
+            android:name=".widget.EditShortcutWidgetReceiver"
+            android:exported="false"
+            android:label="@string/edit_shortcut_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/edit_shortcut_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.HeadingWidgetReceiver"
+            android:exported="false"
+            android:label="@string/heading_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/heading_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.ReadingViewWidgetReceiver"
+            android:exported="false"
+            android:label="@string/reading_view_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/reading_view_widget_info" />
+        </receiver>
+
+        <!-- Configuration activity for EditShortcutWidget and HeadingWidget
+             (both are "pick one heading from today's note" widgets).
+             exported=true is required for the system's Home app process to
+             launch it via ACTION_APPWIDGET_CONFIGURE across the app
+             boundary, same as any other widget config activity. -->
+        <activity
+            android:name=".widget.HeadingPickerActivity"
+            android:exported="true"
+            android:theme="@style/Theme.DailyObsi">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_CONFIGURE" />
+            </intent-filter>
+        </activity>
 
     </application>
 </manifest>

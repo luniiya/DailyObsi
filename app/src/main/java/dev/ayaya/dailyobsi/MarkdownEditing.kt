@@ -29,6 +29,7 @@ import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
@@ -74,7 +75,7 @@ import kotlin.math.roundToInt
 
 private const val LOG_TAG = "DailyObsiEdit"
 
-private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
+private fun AnnotatedString.Builder.appendEditableInline(raw: String, linkColor: Color) {
     var i = 0
     val n = raw.length
     while (i < n) {
@@ -84,7 +85,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             if (closeTag != -1 && endTag != -1 && closeTag < endTag) {
                 val color = highlightColorFor(raw.substring(i, closeTag))
                 withStyle(SpanStyle(color = MUTED)) { append(raw.substring(i, closeTag + 1)) }
-                withStyle(SpanStyle(background = color)) { appendEditableInline(raw.substring(closeTag + 1, endTag)) }
+                withStyle(SpanStyle(background = color)) { appendEditableInline(raw.substring(closeTag + 1, endTag), linkColor) }
                 withStyle(SpanStyle(color = MUTED)) { append("</mark>") }
                 i = endTag + "</mark>".length
                 continue
@@ -94,7 +95,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             val end = raw.indexOf("==", i + 2)
             if (end > i + 2) {
                 withStyle(SpanStyle(color = MUTED)) { append("==") }
-                withStyle(SpanStyle(background = HIGHLIGHT_YELLOW)) { appendEditableInline(raw.substring(i + 2, end)) }
+                withStyle(SpanStyle(background = HIGHLIGHT_YELLOW)) { appendEditableInline(raw.substring(i + 2, end), linkColor) }
                 withStyle(SpanStyle(color = MUTED)) { append("==") }
                 i = end + 2
                 continue
@@ -105,7 +106,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             if (end > i + 3) {
                 withStyle(SpanStyle(color = MUTED)) { append("***") }
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontStyle = FontStyle.Italic)) {
-                    appendEditableInline(raw.substring(i + 3, end))
+                    appendEditableInline(raw.substring(i + 3, end), linkColor)
                 }
                 withStyle(SpanStyle(color = MUTED)) { append("***") }
                 i = end + 3
@@ -117,7 +118,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             val end = raw.indexOf(delim, i + 2)
             if (end > i + 2) {
                 withStyle(SpanStyle(color = MUTED)) { append(delim) }
-                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendEditableInline(raw.substring(i + 2, end)) }
+                withStyle(SpanStyle(fontWeight = FontWeight.Bold)) { appendEditableInline(raw.substring(i + 2, end), linkColor) }
                 withStyle(SpanStyle(color = MUTED)) { append(delim) }
                 i = end + 2
                 continue
@@ -128,7 +129,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             if (end > i + 2) {
                 withStyle(SpanStyle(color = MUTED)) { append("~~") }
                 withStyle(SpanStyle(textDecoration = TextDecoration.LineThrough)) {
-                    appendEditableInline(raw.substring(i + 2, end))
+                    appendEditableInline(raw.substring(i + 2, end), linkColor)
                 }
                 withStyle(SpanStyle(color = MUTED)) { append("~~") }
                 i = end + 2
@@ -150,7 +151,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             val end = raw.indexOf(raw[i], i + 1)
             if (end > i + 1) {
                 withStyle(SpanStyle(color = MUTED)) { append(delim) }
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendEditableInline(raw.substring(i + 1, end)) }
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic)) { appendEditableInline(raw.substring(i + 1, end), linkColor) }
                 withStyle(SpanStyle(color = MUTED)) { append(delim) }
                 i = end + 1
                 continue
@@ -167,7 +168,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
         if (raw.startsWith("[[", i)) {
             val end = raw.indexOf("]]", i + 2)
             if (end != -1) {
-                withStyle(SpanStyle(color = LINK_COLOR)) { append(raw.substring(i, end + 2)) }
+                withStyle(SpanStyle(color = linkColor)) { append(raw.substring(i, end + 2)) }
                 i = end + 2
                 continue
             }
@@ -177,7 +178,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
             if (textEnd != -1 && textEnd + 1 < n && raw[textEnd + 1] == '(') {
                 val urlEnd = raw.indexOf(')', textEnd + 2)
                 if (urlEnd != -1) {
-                    withStyle(SpanStyle(color = LINK_COLOR, textDecoration = TextDecoration.Underline)) {
+                    withStyle(SpanStyle(color = linkColor, textDecoration = TextDecoration.Underline)) {
                         append(raw.substring(i, textEnd + 1))
                     }
                     withStyle(SpanStyle(color = MUTED)) { append(raw.substring(textEnd + 1, urlEnd + 1)) }
@@ -195,7 +196,7 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
  *  character in [raw] is re-appended exactly once (styled, never hidden/
  *  substituted) so offsets stay 1:1 -- its span styles get replayed onto a
  *  TextFieldBuffer by [markdownOutputTransformation]. */
-fun highlightMarkdownForEdit(raw: String): AnnotatedString = buildAnnotatedString {
+fun highlightMarkdownForEdit(raw: String, linkColor: Color): AnnotatedString = buildAnnotatedString {
     val lines = raw.split("\n")
     var inFence = false
     lines.forEachIndexed { idx, line ->
@@ -224,9 +225,9 @@ fun highlightMarkdownForEdit(raw: String): AnnotatedString = buildAnnotatedStrin
                     append(markGlyph)
                     append(checkboxMatch.groupValues[3])
                 }
-                appendEditableInline(checkboxMatch.groupValues[4])
+                appendEditableInline(checkboxMatch.groupValues[4], linkColor)
             }
-            TAGS_LINE.matches(line.trim()) -> withStyle(SpanStyle(color = LINK_COLOR)) { append(line) }
+            TAGS_LINE.matches(line.trim()) -> withStyle(SpanStyle(color = linkColor)) { append(line) }
             HR.matches(line) -> withStyle(SpanStyle(color = MUTED, letterSpacing = 2.sp)) { append(line) }
             headerMatch != null -> {
                 val level = headerMatch.groupValues[1].length
@@ -235,12 +236,12 @@ fun highlightMarkdownForEdit(raw: String): AnnotatedString = buildAnnotatedStrin
                 }
                 withStyle(SpanStyle(color = MUTED)) { append(headerMatch.groupValues[1] + headerMatch.groupValues[2]) }
                 withStyle(SpanStyle(fontWeight = FontWeight.Bold, fontSize = size, color = headerColorFor(level))) {
-                    appendEditableInline(headerMatch.groupValues[3])
+                    appendEditableInline(headerMatch.groupValues[3], linkColor)
                 }
             }
             BLOCKQUOTE.matchEntire(line) != null ->
-                withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = MUTED)) { appendEditableInline(line) }
-            else -> appendEditableInline(line)
+                withStyle(SpanStyle(fontStyle = FontStyle.Italic, color = MUTED)) { appendEditableInline(line, linkColor) }
+            else -> appendEditableInline(line, linkColor)
         }
     }
 }
@@ -334,10 +335,14 @@ private fun checkboxOverlaySpecs(text: String): List<CheckboxOverlaySpec> {
  *  span styles (still valid 1:1 since it never changes length), then hides every
  *  checkbox line's "- [ ]"/"- [x]" syntax (transparent, not deleted, so it still
  *  reserves layout space) -- [MarkdownTextField] overlays a real Checkbox exactly
- *  there instead, for a pixel-accurate match with reading mode. */
-private val markdownOutputTransformation = OutputTransformation {
+ *  there instead, for a pixel-accurate match with reading mode. Takes [linkColor]
+ *  as a param (built fresh per-recomposition via `remember(linkColor)` at the
+ *  call site) rather than being a fixed top-level val, since OutputTransformation
+ *  itself isn't composable and can't read MaterialTheme -- same reasoning as
+ *  MarkdownReading.kt's parseInline/appendMarkdownInline threading. */
+private fun markdownOutputTransformation(linkColor: Color) = OutputTransformation {
     val raw = asCharSequence().toString()
-    highlightMarkdownForEdit(raw).spanStyles.forEach { addStyle(it.item, it.start, it.end) }
+    highlightMarkdownForEdit(raw, linkColor).spanStyles.forEach { addStyle(it.item, it.start, it.end) }
     for (spec in checkboxOverlaySpecs(raw)) {
         addStyle(SpanStyle(color = Color.Transparent), spec.hideStart, spec.hideEnd)
     }
@@ -431,6 +436,9 @@ fun MarkdownTextField(
     onMoveLine: ((lineIndex: Int, delta: Int) -> Unit)? = null,
 ) {
     val state = rememberTextFieldState(initialText = value)
+    // Dynamic theme accent, not a hardcoded blue -- see markdownOutputTransformation's
+    // doc comment.
+    val linkColor = MaterialTheme.colorScheme.primary
 
     // Set by the bubble's button handlers right before calling onMoveLine/
     // onShiftIndent, so the resync below (which only sees "the text changed
@@ -481,7 +489,7 @@ fun MarkdownTextField(
             scrollState = scrollState,
             onTextLayout = { layoutResult = it() },
             inputTransformation = listContinuationInputTransformation,
-            outputTransformation = markdownOutputTransformation,
+            outputTransformation = remember(linkColor) { markdownOutputTransformation(linkColor) },
         )
 
         val lr = layoutResult
