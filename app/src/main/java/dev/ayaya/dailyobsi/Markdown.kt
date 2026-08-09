@@ -1,18 +1,37 @@
+@file:OptIn(ExperimentalFoundationApi::class, ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
+
 package dev.ayaya.dailyobsi
 
 import android.net.Uri
+import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.input.InputTransformation
+import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.delete
+import androidx.compose.foundation.text.input.insert
+import androidx.compose.foundation.text.input.rememberTextFieldState
+import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.size
@@ -20,45 +39,57 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
+import androidx.compose.material.icons.filled.Add
+import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
+import androidx.compose.material3.LocalMinimumInteractiveComponentSize
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.SmallFloatingActionButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerInputScope
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.LinkAnnotation
 import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextLinkStyles
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
-import androidx.compose.ui.text.input.OffsetMapping
-import androidx.compose.ui.text.input.TransformedText
-import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
@@ -67,6 +98,7 @@ import kotlinx.coroutines.withContext
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
+import kotlin.math.roundToInt
 
 /**
  * Not a full CommonMark renderer -- a pragmatic subset covering what
@@ -137,6 +169,51 @@ private fun indentLevel(leading: String): Int {
 
 private fun leadingWhitespaceOf(line: String) = line.takeWhile { it == ' ' || it == '\t' }
 
+/** Axis-dominant horizontal swipe-to-indent, shared between reading mode's
+ *  checkbox row and the edit-mode checkbox overlay (see [MarkdownTextField]).
+ *  Doesn't just watch horizontal movement (that steals ordinary vertical
+ *  scrolls the instant they wobble sideways past touch-slop): once slop is
+ *  crossed on either axis, only commits to the swipe if horizontal clearly
+ *  dominates -- otherwise bails immediately without consuming, so the
+ *  enclosing scrollable still gets the gesture. PointerInputScope already
+ *  implements Density, so `.dp.toPx()` works directly, no LocalDensity needed. */
+private suspend fun PointerInputScope.detectSwipeToIndent(lineIndex: Int, onShiftIndent: (Int, Int) -> Unit) {
+    val thresholdPx = 56.dp.toPx()
+    awaitEachGesture {
+        val down = awaitFirstDown(requireUnconsumed = false)
+        var accumX = 0f
+        var accumY = 0f
+        var horizontalLocked = false
+        while (true) {
+            val event = awaitPointerEvent()
+            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+            if (change.changedToUpIgnoreConsumed()) {
+                if (horizontalLocked) {
+                    when {
+                        accumX > thresholdPx -> onShiftIndent(lineIndex, 1)
+                        accumX < -thresholdPx -> onShiftIndent(lineIndex, -1)
+                    }
+                }
+                break
+            }
+            val delta = change.positionChange()
+            accumX += delta.x
+            accumY += delta.y
+            if (!horizontalLocked) {
+                val slop = viewConfiguration.touchSlop
+                if (abs(accumX) > slop || abs(accumY) > slop) {
+                    if (abs(accumX) > abs(accumY) * 1.5f) {
+                        horizontalLocked = true
+                    } else {
+                        break // predominantly vertical -- let the list scroll
+                    }
+                }
+            }
+            if (horizontalLocked) change.consume()
+        }
+    }
+}
+
 private sealed class Block {
     data class Line(val raw: String, val lineIndex: Int) : Block()
     /** [firstBodyLine] is the file line index of body[0], for writing back to a specific field line. */
@@ -164,6 +241,35 @@ private fun parseBlocks(text: String): List<Block> {
         }
     }
     return blocks
+}
+
+/** Inclusive raw-file line range of the *body* under the header at
+ *  [headerLineIndex] -- the header line itself excluded, everything up to
+ *  (not including) the next header whose level is <= this one, or end of
+ *  file. Same boundary rule as the reading-mode fold in [MarkdownView], and
+ *  what the section editor (pencil icon) reads/writes. Returns an empty
+ *  range (nothing to show) if the header has no body before that boundary.
+ *  Walks [parseBlocks]'s block list rather than raw lines so a `#` inside a
+ *  fenced code block is never mistaken for a heading, matching the fold. */
+fun headerBodyLineRange(text: String, headerLineIndex: Int): IntRange {
+    val blocks = parseBlocks(text)
+    val headerBlockIdx = blocks.indexOfFirst { it is Block.Line && it.lineIndex == headerLineIndex }
+    val totalLines = text.lines().size
+    if (headerBlockIdx == -1) return headerLineIndex + 1..headerLineIndex
+    val level = HEADER.matchEntire((blocks[headerBlockIdx] as Block.Line).raw)?.groupValues?.get(1)?.length
+        ?: return headerLineIndex + 1..headerLineIndex
+    var endLine = totalLines - 1
+    for (i in headerBlockIdx + 1 until blocks.size) {
+        val b = blocks[i]
+        if (b is Block.Line) {
+            val hLevel = HEADER.matchEntire(b.raw)?.groupValues?.get(1)?.length
+            if (hLevel != null && hLevel <= level) {
+                endLine = b.lineIndex - 1
+                break
+            }
+        }
+    }
+    return (headerLineIndex + 1)..endLine
 }
 
 /** Recursive inline scanner: appends styled spans to [this], recursing into
@@ -294,6 +400,7 @@ fun MarkdownView(
     onShiftIndent: (lineIndex: Int, delta: Int) -> Unit,
     onMoveLine: (lineIndex: Int, delta: Int) -> Unit,
     onSetLine: (lineIndex: Int, newLine: String) -> Unit,
+    onEditSection: (headerLineIndex: Int) -> Unit,
 ) {
     val blocks = remember(text) { parseBlocks(text) }
     val totalLines = remember(text) { text.lines().size }
@@ -335,8 +442,8 @@ fun MarkdownView(
                     onToggleCheckbox = onToggleCheckbox,
                     onShiftIndent = onShiftIndent,
                     onMoveLine = onMoveLine,
-                    isHeaderCollapsed = collapsedHeaders[block.lineIndex] == true,
-                    onToggleHeaderCollapse = { idx -> collapsedHeaders[idx] = !(collapsedHeaders[idx] ?: false) }
+                    onToggleHeaderCollapse = { idx -> collapsedHeaders[idx] = !(collapsedHeaders[idx] ?: false) },
+                    onEditSection = onEditSection
                 )
             }
         }
@@ -352,8 +459,8 @@ private fun MarkdownLine(
     onToggleCheckbox: (Int) -> Unit,
     onShiftIndent: (Int, Int) -> Unit,
     onMoveLine: (Int, Int) -> Unit,
-    isHeaderCollapsed: Boolean,
     onToggleHeaderCollapse: (Int) -> Unit,
+    onEditSection: (Int) -> Unit,
 ) {
     val checkboxMatch = CHECKBOX_LINE.matchEntire(line)
     val embedMatch = EMBED_LINE.matchEntire(line.trim())
@@ -363,7 +470,6 @@ private fun MarkdownLine(
         checkboxMatch != null -> {
             val checked = checkboxMatch.groupValues[2].equals("x", ignoreCase = true)
             val indent = indentLevel(leadingWhitespaceOf(line))
-            val density = LocalDensity.current
             Row(
                 verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
@@ -371,56 +477,31 @@ private fun MarkdownLine(
                     .padding(start = (indent * 20).dp)
                     .clickable { onToggleCheckbox(lineIndex) }
                     // Swipe right/left does what the old ⇤/⇥ buttons did --
-                    // indent/outdent this line. Doesn't just watch horizontal
-                    // movement (that stole ordinary vertical scrolls the
-                    // instant they wobbled sideways past touch-slop): once
-                    // slop is crossed we check which axis actually dominates,
-                    // and only commit to the swipe if horizontal clearly
-                    // wins -- otherwise we bail immediately so the enclosing
-                    // LazyColumn's scroll takes the gesture instead.
-                    .pointerInput(lineIndex) {
-                        val thresholdPx = with(density) { 56.dp.toPx() }
-                        awaitEachGesture {
-                            val down = awaitFirstDown(requireUnconsumed = false)
-                            var accumX = 0f
-                            var accumY = 0f
-                            var horizontalLocked = false
-                            while (true) {
-                                val event = awaitPointerEvent()
-                                val change = event.changes.firstOrNull { it.id == down.id } ?: break
-                                if (change.changedToUpIgnoreConsumed()) {
-                                    if (horizontalLocked) {
-                                        when {
-                                            accumX > thresholdPx -> onShiftIndent(lineIndex, 1)
-                                            accumX < -thresholdPx -> onShiftIndent(lineIndex, -1)
-                                        }
-                                    }
-                                    break
-                                }
-                                val delta = change.positionChange()
-                                accumX += delta.x
-                                accumY += delta.y
-                                if (!horizontalLocked) {
-                                    val slop = viewConfiguration.touchSlop
-                                    if (abs(accumX) > slop || abs(accumY) > slop) {
-                                        if (abs(accumX) > abs(accumY) * 1.5f) {
-                                            horizontalLocked = true
-                                        } else {
-                                            break // predominantly vertical -- let the list scroll
-                                        }
-                                    }
-                                }
-                                if (horizontalLocked) change.consume()
-                            }
-                        }
-                    }
-                    .padding(vertical = 4.dp)
+                    // indent/outdent this line (also reused by the edit-mode
+                    // checkbox overlay, see detectSwipeToIndent).
+                    .pointerInput(lineIndex) { detectSwipeToIndent(lineIndex, onShiftIndent) }
+                    .padding(vertical = 3.dp)
             ) {
-                Checkbox(checked = checked, onCheckedChange = { onToggleCheckbox(lineIndex) })
+                // It's not just the checkbox glyph that made rows feel huge
+                // -- it's Material3's default 48dp minimum touch target,
+                // which reserves that much row height regardless of the
+                // visual checkbox size. Shrinking the layout (not just
+                // scaling the drawn pixels) is what let more todos fit; the
+                // explicit size on top shrinks the glyph itself further.
+                CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                    Checkbox(
+                        checked = checked,
+                        onCheckedChange = { onToggleCheckbox(lineIndex) },
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
                 Text(
                     parseInline(checkboxMatch.groupValues[4]),
                     style = MaterialTheme.typography.bodyLarge,
-                    modifier = Modifier.weight(1f)
+                    // Zeroing the checkbox's touch target above also zeroed
+                    // its built-in padding, so text was sitting flush against
+                    // it -- add that gap back explicitly.
+                    modifier = Modifier.weight(1f).padding(start = 8.dp)
                 )
                 // Reorders this line up/down in the raw file (swap with the
                 // adjacent line). Indent shifting moved to the swipe above.
@@ -474,18 +555,25 @@ private fun MarkdownLine(
                     .clickable { onToggleHeaderCollapse(lineIndex) }
                     .padding(top = 12.dp, bottom = 4.dp)
             ) {
-                Icon(
-                    if (isHeaderCollapsed) Icons.AutoMirrored.Filled.KeyboardArrowRight else Icons.Filled.KeyboardArrowDown,
-                    contentDescription = if (isHeaderCollapsed) "Expand" else "Collapse",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(end = 4.dp).size(20.dp)
-                )
                 Text(
                     parseInline(m.groupValues[3]),
                     style = style,
                     fontWeight = FontWeight.Bold,
                     color = headerColorFor(level),
                     modifier = Modifier.weight(1f)
+                )
+                // Opens a dedicated page to edit just this section's body
+                // (see SectionEditorScreen) -- nested inside the row's own
+                // fold-toggle clickable, so tapping the pencil consumes the
+                // touch there and doesn't also fold/unfold the section.
+                Icon(
+                    Icons.Filled.Edit,
+                    contentDescription = "Edit section",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier
+                        .clickable { onEditSection(lineIndex) }
+                        .padding(start = 8.dp)
+                        .size(18.dp)
                 )
             }
         }
@@ -552,7 +640,11 @@ private fun EmbedImage(name: String, dailyUri: Uri) {
             model = uri,
             contentDescription = name,
             contentScale = ContentScale.FillWidth,
-            modifier = Modifier.fillMaxWidth().heightIn(max = 320.dp).padding(vertical = 4.dp)
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 320.dp)
+                .padding(vertical = 4.dp)
+                .clip(RoundedCornerShape(12.dp))
         )
     } else {
         Text(
@@ -787,9 +879,10 @@ private fun AnnotatedString.Builder.appendEditableInline(raw: String) {
 
 private val CHECKED_COLOR = Color(0xFF4CAF50)
 
-/** Length-preserving styling of the whole raw note text, line by line, for
- *  [MarkdownVisualTransformation]. Every character in [raw] is re-appended
- *  exactly once (styled, never hidden/substituted) so offsets stay 1:1. */
+/** Length-preserving styling of the whole raw note text, line by line. Every
+ *  character in [raw] is re-appended exactly once (styled, never hidden/
+ *  substituted) so offsets stay 1:1 -- its span styles get replayed onto a
+ *  [TextFieldBuffer] by [markdownOutputTransformation] in [MarkdownTextField]. */
 fun highlightMarkdownForEdit(raw: String): AnnotatedString = buildAnnotatedString {
     val lines = raw.split("\n")
     var inFence = false
@@ -838,10 +931,235 @@ fun highlightMarkdownForEdit(raw: String): AnnotatedString = buildAnnotatedStrin
     }
 }
 
-/** Wraps [highlightMarkdownForEdit] for use as a TextField's visualTransformation.
- *  Safe to use [OffsetMapping.Identity] because the highlighter never adds or
- *  removes characters -- only applies [SpanStyle]s. */
-class MarkdownVisualTransformation : VisualTransformation {
-    override fun filter(text: AnnotatedString): TransformedText =
-        TransformedText(highlightMarkdownForEdit(text.text), OffsetMapping.Identity)
+private val ORDERED_LIST_PREFIX = Regex("""^(\s*)(\d+)\.(\s+)""")
+
+/** On a plain Enter keystroke (exactly one "\n" inserted, nothing replaced)
+ *  whose line is an ordered-list item ("1. text"), continues the list on the
+ *  new line with "{n+1}. " -- or, if that item's text was empty, strips the
+ *  marker instead (Enter on a blank "N. " exits the list rather than
+ *  incrementing forever). Any other edit (typing, paste, deletion, IME
+ *  composition, multi-change edits) passes through untouched. Built on
+ *  [InputTransformation] rather than diffing values by hand: [changes] gives
+ *  this directly (a single collapsed original range, length-1 new range). */
+private val orderedListInputTransformation = InputTransformation {
+    if (changes.changeCount != 1) return@InputTransformation
+    val newRange = changes.getRange(0)
+    val oldRange = changes.getOriginalRange(0)
+    if (!oldRange.collapsed || newRange.length != 1) return@InputTransformation
+    val full = asCharSequence()
+    if (full[newRange.start] != '\n') return@InputTransformation
+
+    val insertPos = newRange.start
+    val lineStart = full.lastIndexOf('\n', insertPos - 1) + 1
+    val currentLine = full.substring(lineStart, insertPos)
+    val m = ORDERED_LIST_PREFIX.find(currentLine) ?: return@InputTransformation
+    val contentAfterMarker = currentLine.substring(m.range.last + 1)
+
+    if (contentAfterMarker.isBlank()) {
+        delete(lineStart, insertPos)
+        placeCursorAfterCharAt(lineStart)
+    } else {
+        val num = m.groupValues[2].toIntOrNull() ?: return@InputTransformation
+        val marker = "${m.groupValues[1]}${num + 1}. "
+        insert(insertPos + 1, marker)
+        placeCursorAfterCharAt(insertPos + marker.length)
+    }
+}
+
+/** One checkbox line's position, for [MarkdownTextField]'s overlay: [hideStart]/[hideEnd]
+ *  is the raw-text-offset span of its "- [ ]"/"- [x]" syntax (hidden, not deleted --
+ *  see [markdownOutputTransformation]), [anchorOffset] is where that span starts
+ *  *after* leading indentation, i.e. where the overlaid Checkbox actually gets
+ *  placed (matching reading mode's checkbox position after the indent padding). */
+private data class CheckboxOverlaySpec(
+    val lineIndex: Int,
+    val hideStart: Int,
+    val hideEnd: Int,
+    val anchorOffset: Int,
+    val checked: Boolean,
+)
+
+private fun checkboxOverlaySpecs(text: String): List<CheckboxOverlaySpec> {
+    val specs = mutableListOf<CheckboxOverlaySpec>()
+    var pos = 0
+    text.split("\n").forEachIndexed { idx, line ->
+        val m = CHECKBOX_LINE.matchEntire(line)
+        if (m != null) {
+            specs.add(
+                CheckboxOverlaySpec(
+                    lineIndex = idx,
+                    hideStart = pos,
+                    hideEnd = pos + m.groupValues[1].length + 1 + m.groupValues[3].length,
+                    anchorOffset = pos + leadingWhitespaceOf(line).length,
+                    checked = m.groupValues[2].equals("x", ignoreCase = true)
+                )
+            )
+        }
+        pos += line.length + 1
+    }
+    return specs
+}
+
+/** What's actually displayed for the raw text: replays [highlightMarkdownForEdit]'s
+ *  span styles (still valid 1:1 since it never changes length), then hides every
+ *  checkbox line's "- [ ]"/"- [x]" syntax (transparent, not deleted, so it still
+ *  reserves layout space) -- [MarkdownTextField] overlays a real Checkbox exactly
+ *  there instead, for a pixel-accurate match with reading mode. */
+private val markdownOutputTransformation = OutputTransformation {
+    val raw = asCharSequence().toString()
+    highlightMarkdownForEdit(raw).spanStyles.forEach { addStyle(it.item, it.start, it.end) }
+    for (spec in checkboxOverlaySpecs(raw)) {
+        addStyle(SpanStyle(color = Color.Transparent), spec.hideStart, spec.hideEnd)
+    }
+}
+
+/** Shared raw-markdown editor for both main edit mode and the section editor.
+ *  Built on the newer TextFieldState-based BasicTextField
+ *  (androidx.compose.foundation.text.input) specifically for two things a
+ *  classic VisualTransformation can't do: hide checkbox syntax behind a real
+ *  overlaid [Checkbox] (matching reading mode pixel-for-pixel, via
+ *  [markdownOutputTransformation]) and keep that overlay correctly positioned
+ *  while scrolling, via a [ScrollState] hoisted here and shared between the
+ *  text field and the overlay -- the same `scrollState.value` that moves the
+ *  text also shifts the overlay, instead of guessing at an internal scroll
+ *  offset the classic API never exposed.
+ *
+ *  [onShiftIndent]/[onMoveLine] are optional: pass them to also get the
+ *  swipe-to-indent gesture and up/down reorder icons over each checkbox.
+ *  This composable has no idea what [value] represents in the wider app, so
+ *  it always reports line indices local to [value] itself -- main edit mode
+ *  passes callbacks operating on the full file (its `value` *is* the full
+ *  file), the section editor passes callbacks operating on its own draft
+ *  string instead (see `SectionEditorScreen`), not the file directly, since
+ *  the file won't reflect the draft until Save. */
+@Composable
+fun MarkdownTextField(
+    value: String,
+    onValueChange: (String) -> Unit,
+    modifier: Modifier = Modifier,
+    keyboardOptions: KeyboardOptions = KeyboardOptions.Default,
+    textStyle: TextStyle,
+    cursorBrush: Brush,
+    onShiftIndent: ((lineIndex: Int, delta: Int) -> Unit)? = null,
+    onMoveLine: ((lineIndex: Int, delta: Int) -> Unit)? = null,
+) {
+    val state = rememberTextFieldState(initialText = value)
+
+    // Resync when `value` changes for a reason other than this field's own
+    // edit (switching notes/sections). Our own edits already round-trip back
+    // to an equal `value` on the next recomposition, so this never fights
+    // the user mid-keystroke.
+    LaunchedEffect(value) {
+        if (state.text.toString() != value) {
+            state.setTextAndPlaceCursorAtEnd(value)
+        }
+    }
+    LaunchedEffect(state) {
+        snapshotFlow { state.text.toString() }.collect { onValueChange(it) }
+    }
+
+    var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
+    var containerWidthPx by remember { mutableIntStateOf(0) }
+    val scrollState = rememberScrollState()
+    val density = LocalDensity.current
+    val checkboxSizePx = with(density) { 18.dp.roundToPx() }
+    val iconSizePx = with(density) { 22.dp.roundToPx() }
+    val iconsClusterWidthPx = iconSizePx * 2 + with(density) { 8.dp.roundToPx() }
+
+    Box(modifier = modifier.onSizeChanged { containerWidthPx = it.width }) {
+        BasicTextField(
+            state = state,
+            modifier = Modifier.fillMaxSize(),
+            keyboardOptions = keyboardOptions,
+            textStyle = textStyle,
+            cursorBrush = cursorBrush,
+            scrollState = scrollState,
+            onTextLayout = { layoutResult = it() },
+            inputTransformation = orderedListInputTransformation,
+            outputTransformation = markdownOutputTransformation,
+        )
+
+        val lr = layoutResult
+        val textLen = lr?.layoutInput?.text?.length ?: 0
+        if (lr != null && textLen > 0) {
+            for (spec in checkboxOverlaySpecs(state.text.toString())) {
+                val anchor = spec.anchorOffset.coerceIn(0, textLen - 1)
+                val box = lr.getBoundingBox(anchor)
+                val top = box.top.roundToInt()
+                val bottom = box.bottom.roundToInt()
+                val centerY = (top + bottom) / 2
+
+                Box(
+                    modifier = Modifier.offset {
+                        IntOffset(box.left.roundToInt(), centerY - checkboxSizePx / 2 - scrollState.value)
+                    }
+                ) {
+                    CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
+                        Checkbox(checked = spec.checked, onCheckedChange = null, modifier = Modifier.size(18.dp))
+                    }
+                }
+
+                if (onShiftIndent != null) {
+                    // Scoped to roughly the checkbox's own area, NOT the full
+                    // row -- unlike reading mode's row (plain static Text,
+                    // nothing to conflict with), the rest of this row *is* the
+                    // real editable text field underneath. A full-width swipe
+                    // zone here silently ate every tap meant to place a
+                    // cursor in the todo text, since it sat on top of it.
+                    Box(
+                        modifier = Modifier
+                            .offset { IntOffset(box.left.roundToInt(), top - scrollState.value) }
+                            .size(
+                                width = with(density) { (checkboxSizePx * 2).toDp() },
+                                height = with(density) { (bottom - top).toDp() }
+                            )
+                            .pointerInput(spec.lineIndex) { detectSwipeToIndent(spec.lineIndex, onShiftIndent) }
+                    )
+                }
+
+                if (onMoveLine != null) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.offset {
+                            IntOffset(
+                                containerWidthPx - iconsClusterWidthPx,
+                                centerY - iconSizePx / 2 - scrollState.value
+                            )
+                        }
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowUp,
+                            contentDescription = "Move up",
+                            modifier = Modifier.clickable { onMoveLine(spec.lineIndex, -1) }.size(22.dp)
+                        )
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = "Move down",
+                            modifier = Modifier.clickable { onMoveLine(spec.lineIndex, 1) }.size(22.dp)
+                        )
+                    }
+                }
+            }
+        }
+
+        // A small bubble anchored above the keyboard (right side, so it
+        // doesn't sit in the way) to insert a new checkbox line at the
+        // cursor -- only while the keyboard's actually up, so it's not a
+        // permanent fixture cluttering the screen.
+        if (WindowInsets.isImeVisible) {
+            SmallFloatingActionButton(
+                onClick = {
+                    state.edit {
+                        val cursor = selection.start
+                        val marker = "- [ ] "
+                        insert(cursor, "\n$marker")
+                        placeCursorAfterCharAt(cursor + 1 + marker.length)
+                    }
+                },
+                modifier = Modifier.align(Alignment.BottomEnd).imePadding().padding(12.dp)
+            ) {
+                Icon(Icons.Filled.Add, contentDescription = "Insert checkbox")
+            }
+        }
+    }
 }

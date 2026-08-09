@@ -93,6 +93,19 @@ object DailyNote {
         return lines.joinToString("\n")
     }
 
+    /** Replaces the inclusive line range [range] with [newBody] (split on
+     *  "\n"), rewriting only that span -- used by the section editor to save
+     *  just one header's body without touching the rest of the file. An
+     *  empty range (range.first > range.last, a header with no body yet)
+     *  inserts [newBody] right there instead of replacing nothing. */
+    fun replaceLines(text: String, range: IntRange, newBody: String): String {
+        val lines = text.lines()
+        val start = range.first.coerceIn(0, lines.size)
+        val endExclusive = if (range.first > range.last) start else (range.last + 1).coerceIn(start, lines.size)
+        val result = lines.subList(0, start) + newBody.split("\n") + lines.subList(endExclusive, lines.size)
+        return result.joinToString("\n")
+    }
+
     /** Swaps [lineIndex] with its neighbor one position toward [delta]
      *  (-1 up, +1 down) -- how reading mode reorders tasks in the raw file. */
     fun moveLine(text: String, lineIndex: Int, delta: Int): String {

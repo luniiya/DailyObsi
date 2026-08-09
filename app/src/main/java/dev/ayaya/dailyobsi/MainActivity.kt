@@ -12,7 +12,6 @@ import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -51,8 +50,17 @@ class MainActivity : ComponentActivity() {
                 else -> lightColorScheme()
             }
             MaterialTheme(colorScheme = colorScheme) {
-                Surface(modifier = Modifier.fillMaxSize().safeDrawingPadding()) {
-                    DailyObsiApp()
+                // safeDrawingPadding() goes on the inner Box, not the Surface
+                // itself -- padding the Surface shrinks its own bounds inward
+                // by the inset, so its background never reaches behind the
+                // status/nav bars at all, leaving a mismatched-color gap/seam
+                // right at the edge. This way the Surface's background fills
+                // the literal full screen and only the content inside is
+                // pushed clear of the system bars.
+                Surface(modifier = Modifier.fillMaxSize()) {
+                    Box(modifier = Modifier.safeDrawingPadding()) {
+                        DailyObsiApp()
+                    }
                 }
             }
         }
@@ -80,6 +88,12 @@ fun DailyObsiApp() {
     // yesterday note worth offering instead of jumping straight to "create"?
     var yesterdayFile by remember { mutableStateOf<DocumentFile?>(null) }
 
+    // Section editor (pencil icon on a header, reading mode only): a separate
+    // page that edits just that header's body, not the whole note. Non-null
+    // line index means it's open; the draft is the extracted body text.
+    var editingSectionLine by remember { mutableStateOf<Int?>(null) }
+    var sectionDraft by remember { mutableStateOf("") }
+
     fun loadNote(date: LocalDate) {
         val uri = dailyUri ?: return
         val file = DailyNote.findFile(context, uri, date)
@@ -104,6 +118,23 @@ fun DailyObsiApp() {
     fun exitEditMode() {
         if (editMode) persist(text)
         editMode = false
+    }
+
+    fun openSectionEditor(headerLineIndex: Int) {
+        val range = headerBodyLineRange(text, headerLineIndex)
+        sectionDraft = if (range.first > range.last) "" else text.lines().subList(range.first, range.last + 1).joinToString("\n")
+        editingSectionLine = headerLineIndex
+    }
+
+    fun cancelSectionEditor() { editingSectionLine = null }
+
+    fun saveSectionEditor() {
+        val headerLineIndex = editingSectionLine ?: return
+        // Nothing else can change `text` while this page is open, so the
+        // range computed at open time is still valid here.
+        val range = headerBodyLineRange(text, headerLineIndex)
+        persist(DailyNote.replaceLines(text, range, sectionDraft))
+        editingSectionLine = null
     }
 
     LaunchedEffect(dailyUri) { if (dailyUri != null) loadNote(LocalDate.now()) }
@@ -132,6 +163,9 @@ fun DailyObsiApp() {
     // tapping the Edit/Read toggle -- instead of leaving the screen/app.
     BackHandler(enabled = editMode) { exitEditMode() }
 
+    // System back while the section editor is open acts like Cancel.
+    BackHandler(enabled = editingSectionLine != null) { cancelSectionEditor() }
+
     Scaffold(
         topBar = {
             TopAppBar(
@@ -139,13 +173,20 @@ fun DailyObsiApp() {
                 // static app label once a note's actually open.
                 title = {
                     Text(
-                        if (!showSettings && noteFile != null) noteFile?.name ?: "DailyObsi" else "DailyObsi",
+                        when {
+                            editingSectionLine != null -> "Edit section"
+                            !showSettings && noteFile != null -> noteFile?.name ?: "DailyObsi"
+                            else -> "DailyObsi"
+                        },
                         maxLines = 1,
                         overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
                     )
                 },
                 actions = {
-                    if (showSettings) {
+                    if (editingSectionLine != null) {
+                        TextButton(onClick = ::cancelSectionEditor) { Text("Cancel") }
+                        TextButton(onClick = ::saveSectionEditor) { Text("Save") }
+                    } else if (showSettings) {
                         if (dailyUri != null) {
                             TextButton(onClick = { showSettings = false }) { Text("Done") }
                         }
@@ -164,7 +205,13 @@ fun DailyObsiApp() {
             )
         }
     ) { padding ->
-        if (showSettings) {
+        if (editingSectionLine != null) {
+            SectionEditorScreen(
+                modifier = Modifier.padding(padding),
+                draft = sectionDraft,
+                onDraftChanged = { sectionDraft = it }
+            )
+        } else if (showSettings) {
             SettingsScreen(
                 modifier = Modifier.padding(padding),
                 dailyUri = dailyUri,
@@ -185,6 +232,7 @@ fun DailyObsiApp() {
                 onShiftIndent = { lineIndex, delta -> persist(DailyNote.shiftIndent(text, lineIndex, delta)) },
                 onMoveLine = { lineIndex, delta -> persist(DailyNote.moveLine(text, lineIndex, delta)) },
                 onSetLine = { lineIndex, newLine -> persist(DailyNote.replaceLine(text, lineIndex, newLine)) },
+                onEditSection = ::openSectionEditor,
                 onTextChanged = { text = it },
                 onOpenYesterday = { loadNote(LocalDate.now().minusDays(1)) },
                 onCreateToday = {
@@ -194,6 +242,31 @@ fun DailyObsiApp() {
             )
         }
     }
+}
+
+@Composable
+private fun SectionEditorScreen(
+    modifier: Modifier = Modifier,
+    draft: String,
+    onDraftChanged: (String) -> Unit,
+) {
+    // Same borderless/fullscreen raw-text editing as the main edit mode, just
+    // scoped to one header's body. Save/Cancel live in the top bar; there's
+    // no autosave here since leaving this page always resolves it either way.
+    MarkdownTextField(
+        value = draft,
+        onValueChange = onDraftChanged,
+        modifier = modifier.fillMaxSize().padding(horizontal = 12.dp, vertical = 8.dp),
+        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
+        textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
+        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        // Line indices from MarkdownTextField's overlay here are local to
+        // `draft` (not the full file), so these operate on `draft` itself via
+        // the same onDraftChanged the text editing already uses -- not on the
+        // file directly, which would go stale against `draft` until Save.
+        onShiftIndent = { lineIndex, delta -> onDraftChanged(DailyNote.shiftIndent(draft, lineIndex, delta)) },
+        onMoveLine = { lineIndex, delta -> onDraftChanged(DailyNote.moveLine(draft, lineIndex, delta)) }
+    )
 }
 
 @Composable
@@ -274,6 +347,7 @@ private fun EditorScreen(
     onShiftIndent: (lineIndex: Int, delta: Int) -> Unit,
     onMoveLine: (lineIndex: Int, delta: Int) -> Unit,
     onSetLine: (lineIndex: Int, newLine: String) -> Unit,
+    onEditSection: (headerLineIndex: Int) -> Unit,
     onTextChanged: (String) -> Unit,
     onOpenYesterday: () -> Unit,
     onCreateToday: () -> Unit,
@@ -306,7 +380,7 @@ private fun EditorScreen(
         if (editMode) {
             // Borderless/frameless -- no OutlinedTextField box, no Save button.
             // Autosave (10s tick + on exit/backgrounding) is wired in DailyObsiApp.
-            BasicTextField(
+            MarkdownTextField(
                 value = text,
                 onValueChange = onTextChanged,
                 modifier = Modifier.fillMaxWidth().weight(1f).padding(horizontal = 12.dp, vertical = 8.dp),
@@ -315,8 +389,12 @@ private fun EditorScreen(
                 // scale here too (was stuck at bodyMedium/14sp, way too small),
                 // just a hair smaller since edit mode also carries raw syntax.
                 textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, color = MaterialTheme.colorScheme.onSurface),
-                visualTransformation = remember { MarkdownVisualTransformation() },
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary)
+                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                // Checkbox lines get the same swipe-to-indent + up/down
+                // reorder as reading mode -- line indices here are absolute
+                // into the file, matching what these callbacks expect.
+                onShiftIndent = onShiftIndent,
+                onMoveLine = onMoveLine
             )
         } else {
             MarkdownView(
@@ -327,7 +405,8 @@ private fun EditorScreen(
                 onToggleCheckbox = onToggleCheckbox,
                 onShiftIndent = onShiftIndent,
                 onMoveLine = onMoveLine,
-                onSetLine = onSetLine
+                onSetLine = onSetLine,
+                onEditSection = onEditSection
             )
         }
     }
