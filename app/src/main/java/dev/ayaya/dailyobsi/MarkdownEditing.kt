@@ -7,8 +7,11 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -18,6 +21,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.OutputTransformation
+import androidx.compose.foundation.text.input.TextFieldDecorator
 import androidx.compose.foundation.text.input.delete
 import androidx.compose.foundation.text.input.insert
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -77,6 +81,12 @@ import kotlin.math.roundToInt
  */
 
 private const val LOG_TAG = "DailyObsiEdit"
+private const val TRAILING_SPACER_LINES = 24
+
+private fun editorDisplayText(value: String): String = value + "\n".repeat(TRAILING_SPACER_LINES)
+
+private fun editorContentText(value: String): String =
+    value.removeSuffix("\n".repeat(TRAILING_SPACER_LINES))
 
 private fun AnnotatedString.Builder.appendEditableInline(raw: String, linkColor: Color) {
     var i = 0
@@ -441,7 +451,16 @@ fun MarkdownTextField(
     /** Space reserved below the text for floating editor actions. */
     bottomContentPadding: Dp = 0.dp,
 ) {
-    val state = rememberTextFieldState(initialText = value)
+    val state = rememberTextFieldState(initialText = editorDisplayText(value)).also {
+        LaunchedEffect(value) {
+            if (editorContentText(it.text.toString()) != value) {
+                it.edit {
+                    replace(0, length, editorDisplayText(value))
+                    placeCursorBeforeCharAt(value.length)
+                }
+            }
+        }
+    }
     // Dynamic theme accent, not a hardcoded blue -- see markdownOutputTransformation's
     // doc comment.
     val linkColor = MaterialTheme.colorScheme.primary
@@ -463,15 +482,15 @@ fun MarkdownTextField(
     // on the next recomposition, so this only actually fires for those
     // external changes.
     LaunchedEffect(value) {
-        if (state.text.toString() != value) {
-            val oldText = state.text.toString()
+        if (editorContentText(state.text.toString()) != value) {
+            val oldText = editorContentText(state.text.toString())
             val oldOffset = state.selection.start.coerceIn(0, oldText.length)
             val pending = pendingCursorFollow
             pendingCursorFollow = null
             val newOffset = resolveCursorFollow(oldText, oldOffset, value, pending)
             Log.d(LOG_TAG, "resync: cursor $oldOffset -> $newOffset (pending=$pending, len ${oldText.length} -> ${value.length})")
             state.edit {
-                replace(0, length, value)
+                replace(0, length, editorDisplayText(value))
                 placeCursorBeforeCharAt(newOffset)
             }
         }
@@ -480,7 +499,8 @@ fun MarkdownTextField(
     val latestOnValueChange by rememberUpdatedState(onValueChange)
     LaunchedEffect(state) {
         snapshotFlow { state.text.toString() }.collect { changed ->
-            if (changed != latestValue) latestOnValueChange(changed)
+            val content = editorContentText(changed)
+            if (content != latestValue) latestOnValueChange(content)
         }
     }
 
@@ -501,12 +521,7 @@ fun MarkdownTextField(
             // Keep the final lines scrollable above the floating action
             // controls. Without this inset, long notes can disappear under
             // the line utility bubble/FAB while the keyboard is open.
-            // Only reserve space when the scroll is at the end. In the
-            // middle of a note the toolbar can float over the document like
-            // Obsidian's mobile toolbar, without creating a blank strip.
-            modifier = Modifier.fillMaxSize().padding(
-                bottom = if (bubbleOpaqueAtBottom) bottomContentPadding else 0.dp,
-            ),
+            modifier = Modifier.fillMaxSize(),
             keyboardOptions = keyboardOptions,
             textStyle = textStyle,
             cursorBrush = cursorBrush,
@@ -514,6 +529,14 @@ fun MarkdownTextField(
             onTextLayout = { layoutResult = it() },
             inputTransformation = listContinuationInputTransformation,
             outputTransformation = remember(linkColor) { markdownOutputTransformation(linkColor) },
+            decorator = if (bottomContentPadding > 0.dp) {
+                TextFieldDecorator { innerTextField ->
+                    Column {
+                        innerTextField()
+                        Spacer(Modifier.height(bottomContentPadding))
+                    }
+                }
+            } else null,
         )
 
         val lr = layoutResult
@@ -569,7 +592,8 @@ fun MarkdownTextField(
             }
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                tonalElevation = 4.dp,
+                tonalElevation = if (bubbleOpaqueAtBottom) 4.dp else 0.dp,
+                shadowElevation = if (bubbleOpaqueAtBottom) 2.dp else 0.dp,
                 // Keep the utility visually light while scrolling, but give
                 // it a readable backing at the end of a note so the final
                 // lines cannot show through the controls.
