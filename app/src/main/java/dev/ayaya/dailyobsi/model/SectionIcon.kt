@@ -1,6 +1,8 @@
 package dev.ayaya.dailyobsi.model
 
 enum class SectionIcon {
+    TIME_UNTIL,
+    MEDS,
     TASKS,
     JOURNAL,
     GRATITUDE,
@@ -15,6 +17,8 @@ enum class SectionIcon {
 fun defaultSectionIcon(title: String): SectionIcon {
     val normalized = normalizeHeading(title)
     return when {
+        hasAny(normalized, "time until", "countdown", "deadline") -> SectionIcon.TIME_UNTIL
+        hasAny(normalized, "med", "meds", "medicine", "medication", "pill") -> SectionIcon.MEDS
         hasAny(normalized, "todo", "task", "plan") -> SectionIcon.TASKS
         hasAny(normalized, "journal", "diary", "reflection", "report") ->
             SectionIcon.JOURNAL

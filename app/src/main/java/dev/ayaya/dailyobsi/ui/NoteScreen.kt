@@ -39,7 +39,6 @@ import androidx.compose.ui.unit.sp
 import dev.ayaya.dailyobsi.DailyNote
 import dev.ayaya.dailyobsi.MarkdownTextField
 import dev.ayaya.dailyobsi.MarkdownView
-import dev.ayaya.dailyobsi.headerColorFor
 import dev.ayaya.dailyobsi.model.LayoutMode
 import dev.ayaya.dailyobsi.model.NoteSection
 import dev.ayaya.dailyobsi.model.SaveStatus
@@ -217,7 +216,6 @@ private fun SectionPage(
         state.sectionModes[section.id] ?: SectionMode.READ,
     )
     Column(Modifier.fillMaxHeight()) {
-        SectionHeading(section.title, state, mode, model)
         if (mode == SectionMode.WRITE && !state.isHistorical) {
             SectionTextEditor(section, model, onAtTopChanged)
         } else {
@@ -358,35 +356,6 @@ private fun ClassicNote(
                 readOnly = state.isHistorical,
                 onAtTopChanged = onAtTopChanged,
             )
-        }
-    }
-}
-
-@Composable
-private fun SectionHeading(
-    title: String,
-    state: EditorUiState,
-    mode: SectionMode,
-    model: DailyObsiViewModel,
-) {
-    Row(
-        Modifier.fillMaxWidth().padding(start = 16.dp, end = 10.dp, top = 8.dp),
-        verticalAlignment = Alignment.CenterVertically,
-    ) {
-        Text(
-            text = title,
-            modifier = Modifier.weight(1f),
-            color = headerColorFor(2),
-            style = MaterialTheme.typography.headlineSmall,
-        )
-        SaveStatusLabel(state.saveStatus, model::retrySave)
-        if (mode == SectionMode.WRITE && !state.isHistorical) {
-            TextButton(
-                onClick = model::saveNow,
-                enabled = state.saveStatus !is SaveStatus.Saving,
-            ) {
-                Text("Save")
-            }
         }
     }
 }

@@ -42,7 +42,9 @@ fun DailyObsiApp(model: DailyObsiViewModel) {
     Scaffold(
         contentWindowInsets = WindowInsets(0, 0, 0, 0),
         topBar = {
-            DailyTopBar(state, noteAtTop, model)
+            // Memories stay available while scrolling; writing mode replaces
+            // them with the Save action inside the top bar.
+            DailyTopBar(state, showMemories = true, model)
         },
     ) { padding ->
         if (state.showSettings) SettingsScreen(state, model, padding)

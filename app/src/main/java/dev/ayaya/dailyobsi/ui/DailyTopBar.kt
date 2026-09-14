@@ -23,6 +23,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import dev.ayaya.dailyobsi.model.memoryDates
+import dev.ayaya.dailyobsi.model.LayoutMode
+import dev.ayaya.dailyobsi.model.SaveStatus
+import dev.ayaya.dailyobsi.model.SectionMode
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -31,6 +34,11 @@ fun DailyTopBar(
     showMemories: Boolean,
     model: DailyObsiViewModel,
 ) {
+    val writing = !state.isHistorical && if (state.layoutMode == LayoutMode.CLASSIC) {
+        state.classicMode == SectionMode.WRITE
+    } else {
+        state.selectedSection?.let { state.sectionModes[it.id] == SectionMode.WRITE } == true
+    }
     TopAppBar(
         navigationIcon = {
             if (state.isHistorical && !state.showSettings) {
@@ -46,6 +54,12 @@ fun DailyTopBar(
             if (state.showSettings) Text("Settings")
             else if (state.isHistorical) {
                 Text("${state.viewingDate} · Read only", maxLines = 1)
+            }
+            else if (writing) {
+                TextButton(
+                    onClick = model::saveNow,
+                    enabled = state.saveStatus !is SaveStatus.Saving,
+                ) { Text("Save") }
             }
             else if (showMemories) MemoryChips(state, model)
             else Spacer(Modifier.width(1.dp))

@@ -23,6 +23,8 @@ import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
+import androidx.compose.material.icons.filled.HourglassEmpty
+import androidx.compose.material.icons.filled.Medication
 import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Icon
@@ -95,6 +97,8 @@ fun SectionBottomBar(
 }
 
 private fun iconFor(icon: SectionIcon): ImageVector = when (icon) {
+    SectionIcon.TIME_UNTIL -> Icons.Filled.HourglassEmpty
+    SectionIcon.MEDS -> Icons.Filled.Medication
     SectionIcon.TASKS -> Icons.Filled.CheckCircle
     SectionIcon.JOURNAL -> Icons.Filled.Create
     SectionIcon.GRATITUDE -> Icons.Filled.Favorite
