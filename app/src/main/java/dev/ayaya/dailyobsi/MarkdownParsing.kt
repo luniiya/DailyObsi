@@ -1,6 +1,5 @@
 package dev.ayaya.dailyobsi
 
-import android.net.Uri
 import androidx.compose.ui.graphics.Color
 
 /**
@@ -26,11 +25,6 @@ val ORDERED = Regex("""^(\s*)(\d+)\.\s+(.*)$""")
 val UNORDERED = Regex("""^(\s*)[-*+]\s+(.*)$""")
 val BLOCKQUOTE = Regex("""^(\s*)>\s?(.*)$""")
 val EMBED_LINE = Regex("""^!\[\[([^\]]+)]]$""")
-
-/** Process-lifetime cache of resolved `![[embed]]` URIs, keyed on "dailyUri|name".
- *  See EmbedImage in MarkdownReading.kt -- avoids re-running the SAF attachment
- *  search every time a LazyColumn item scrolls out of view and back in. */
-val attachmentUriCache = mutableMapOf<String, Uri?>()
 
 val HIGHLIGHT_YELLOW = Color(0x66FFEB3B)
 val CODE_BG = Color(0x33808080)

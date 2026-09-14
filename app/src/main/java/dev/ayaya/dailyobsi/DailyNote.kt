@@ -4,6 +4,8 @@ import android.content.Context
 import android.net.Uri
 import android.provider.DocumentsContract
 import androidx.documentfile.provider.DocumentFile
+import dev.ayaya.dailyobsi.model.IndexedNote
+import dev.ayaya.dailyobsi.model.dateFromDailyFileName
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 
@@ -64,6 +66,42 @@ object DailyNote {
         return result
     }
 
+    /** Lists valid daily-note files with one provider query. */
+    fun indexFiles(context: Context, treeUri: Uri): Map<LocalDate, IndexedNote> {
+        val result = mutableMapOf<LocalDate, IndexedNote>()
+        val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+            treeUri,
+            DocumentsContract.getTreeDocumentId(treeUri),
+        )
+        context.contentResolver.query(
+            childrenUri,
+            arrayOf(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            ),
+            null,
+            null,
+            null,
+        )?.use { cursor ->
+            val idIndex = cursor.getColumnIndexOrThrow(
+                DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+            )
+            val nameIndex = cursor.getColumnIndexOrThrow(
+                DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+            )
+            while (cursor.moveToNext()) {
+                val name = cursor.getString(nameIndex)
+                val date = dateFromDailyFileName(name) ?: continue
+                val uri = DocumentsContract.buildDocumentUriUsingTree(
+                    treeUri,
+                    cursor.getString(idIndex),
+                )
+                result[date] = IndexedNote(date, uri, name)
+            }
+        }
+        return result
+    }
+
     fun findTodayFile(context: Context, treeUri: Uri): DocumentFile? =
         findFile(context, treeUri, LocalDate.now())
 
@@ -83,9 +121,10 @@ object DailyNote {
     }
 
     fun writeText(context: Context, uri: Uri, text: String) {
-        context.contentResolver.openOutputStream(uri, "wt").use { stream ->
-            stream?.bufferedWriter()?.use { it.write(text) }
+        val stream = checkNotNull(context.contentResolver.openOutputStream(uri, "wt")) {
+            "The document provider did not open an output stream"
         }
+        stream.bufferedWriter().use { writer -> writer.write(text) }
     }
 
     /** Extracts checkbox list items from raw markdown, in file order. */
@@ -171,5 +210,66 @@ object DailyNote {
             return null
         }
         return search(root, 0)
+    }
+
+    /** Resolves several embeds in one tree walk. Each directory is read with
+     * one provider query, avoiding DocumentFile's extra metadata query for
+     * every child and avoiding a complete walk per image. */
+    fun findAttachmentUris(
+        context: Context,
+        treeUri: Uri,
+        names: Set<String>,
+        maxDepth: Int = 4,
+    ): Map<String, Uri> {
+        if (names.isEmpty()) return emptyMap()
+        val found = mutableMapOf<String, Uri>()
+        val visited = mutableSetOf<String>()
+
+        fun search(documentId: String, depth: Int) {
+            if (depth > maxDepth || found.size == names.size || !visited.add(documentId)) return
+            val childrenUri = DocumentsContract.buildChildDocumentsUriUsingTree(
+                treeUri,
+                documentId,
+            )
+            val childDirectories = mutableListOf<String>()
+            context.contentResolver.query(
+                childrenUri,
+                arrayOf(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                ),
+                null,
+                null,
+                null,
+            )?.use { cursor ->
+                val idIndex = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DOCUMENT_ID,
+                )
+                val nameIndex = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_DISPLAY_NAME,
+                )
+                val typeIndex = cursor.getColumnIndexOrThrow(
+                    DocumentsContract.Document.COLUMN_MIME_TYPE,
+                )
+                while (cursor.moveToNext()) {
+                    val childId = cursor.getString(idIndex)
+                    val mimeType = cursor.getString(typeIndex)
+                    if (mimeType == DocumentsContract.Document.MIME_TYPE_DIR) {
+                        childDirectories += childId
+                    } else {
+                        val displayName = cursor.getString(nameIndex)
+                        if (displayName in names && displayName !in found) {
+                            found[displayName] = DocumentsContract
+                                .buildDocumentUriUsingTree(treeUri, childId)
+                        }
+                    }
+                }
+            }
+            childDirectories.forEach { search(it, depth + 1) }
+        }
+
+        search(DocumentsContract.getTreeDocumentId(treeUri), 0)
+        return found
     }
 }

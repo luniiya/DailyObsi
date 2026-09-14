@@ -4,6 +4,7 @@ package dev.ayaya.dailyobsi
 
 import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
@@ -37,6 +38,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -434,6 +436,7 @@ fun MarkdownTextField(
     cursorBrush: Brush,
     onShiftIndent: ((lineIndex: Int, delta: Int) -> Unit)? = null,
     onMoveLine: ((lineIndex: Int, delta: Int) -> Unit)? = null,
+    onAtTopChanged: (Boolean) -> Unit = {},
 ) {
     val state = rememberTextFieldState(initialText = value)
     // Dynamic theme accent, not a hardcoded blue -- see markdownOutputTransformation's
@@ -470,12 +473,20 @@ fun MarkdownTextField(
             }
         }
     }
+    val latestValue by rememberUpdatedState(value)
+    val latestOnValueChange by rememberUpdatedState(onValueChange)
     LaunchedEffect(state) {
-        snapshotFlow { state.text.toString() }.collect { onValueChange(it) }
+        snapshotFlow { state.text.toString() }.collect { changed ->
+            if (changed != latestValue) latestOnValueChange(changed)
+        }
     }
 
     var layoutResult by remember { mutableStateOf<TextLayoutResult?>(null) }
     val scrollState = rememberScrollState()
+    val latestOnAtTopChanged by rememberUpdatedState(onAtTopChanged)
+    LaunchedEffect(scrollState) {
+        snapshotFlow { scrollState.value == 0 }.collect(latestOnAtTopChanged)
+    }
     val density = LocalDensity.current
     val checkboxSizePx = with(density) { 18.dp.roundToPx() }
 
@@ -502,11 +513,25 @@ fun MarkdownTextField(
 
                 Box(
                     modifier = Modifier.offset {
-                        IntOffset(box.left.roundToInt(), centerY - checkboxSizePx / 2 - scrollState.value)
-                    }
+                        IntOffset(
+                            box.left.roundToInt(),
+                            centerY - checkboxSizePx / 2 - scrollState.value,
+                        )
+                    }.size(32.dp).clickable {
+                        latestOnValueChange(
+                            DailyNote.toggleCheckbox(
+                                state.text.toString(),
+                                spec.lineIndex,
+                            ),
+                        )
+                    },
                 ) {
                     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
-                        Checkbox(checked = spec.checked, onCheckedChange = null, modifier = Modifier.size(18.dp))
+                        Checkbox(
+                            checked = spec.checked,
+                            onCheckedChange = null,
+                            modifier = Modifier.size(18.dp),
+                        )
                     }
                 }
             }

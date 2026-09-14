@@ -1,551 +1,79 @@
 package dev.ayaya.dailyobsi
 
-import android.content.Intent
 import android.graphics.Color
-import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
-import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.enableEdgeToEdge
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.isSystemInDarkTheme
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material3.*
-import androidx.compose.runtime.*
-import androidx.compose.ui.Alignment
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.only
+import androidx.compose.foundation.layout.safeDrawing
+import androidx.compose.foundation.layout.windowInsetsPadding
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Surface
+import androidx.compose.material3.darkColorScheme
+import androidx.compose.material3.dynamicDarkColorScheme
+import androidx.compose.material3.dynamicLightColorScheme
+import androidx.compose.material3.lightColorScheme
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.text.font.FontFamily
-import androidx.compose.ui.text.input.KeyboardCapitalization
-import androidx.compose.ui.unit.dp
-import androidx.compose.ui.unit.sp
-import androidx.documentfile.provider.DocumentFile
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
-import androidx.lifecycle.compose.LocalLifecycleOwner
-import dev.ayaya.dailyobsi.widget.requestWidgetRefresh
-import java.time.LocalDate
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.withContext
+import androidx.lifecycle.viewmodel.compose.viewModel
+import dev.ayaya.dailyobsi.ui.DailyObsiApp
+import dev.ayaya.dailyobsi.ui.DailyObsiViewModel
 
 class MainActivity : ComponentActivity() {
     companion object {
-        /** Set by the edit-view shortcut widget's actionStartActivity so this
-         *  launch lands straight in edit mode for today's note instead of the
-         *  reading-mode default -- see DailyObsiApp's startInEditMode param. */
         const val EXTRA_OPEN_EDIT_MODE = "open_edit_mode"
-
-        /** Set by EditShortcutWidget's actionStartActivity to the literal raw
-         *  header line text (e.g. "## Health") it was configured with -- see
-         *  DailyObsiApp's openSectionHeading param. Carries the raw line
-         *  (not a line index) since the widget's own selection is stored the
-         *  same way, for the same reason: line indices go stale the instant
-         *  the note is a fresh file next day. */
         const val EXTRA_OPEN_SECTION_HEADING = "open_section_heading"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        val openEditMode = intent.getBooleanExtra(EXTRA_OPEN_EDIT_MODE, false)
-        val openSectionHeading = intent.getStringExtra(EXTRA_OPEN_SECTION_HEADING)
-        // Lets the system draw transparent, theme-matched status/nav bars
-        // instead of the old opaque light-theme scrim -- without this the
-        // bars stayed solid white/light regardless of app theme or dark mode.
-        // enableEdgeToEdge()'s own default already makes the status bar fully
-        // transparent, but NOT the navigation bar -- that defaults to a
-        // translucent scrim (DefaultLightScrim/DefaultDarkScrim) so 3-button
-        // nav stays legible over arbitrary content. This app wants the same
-        // literal transparency there too, content visible straight through.
         enableEdgeToEdge(
-            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT)
+            navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )
+        val startInEditMode = intent.getBooleanExtra(EXTRA_OPEN_EDIT_MODE, false)
+        val openSectionHeading = intent.getStringExtra(EXTRA_OPEN_SECTION_HEADING)
         setContent {
-            val context = androidx.compose.ui.platform.LocalContext.current
-            val dark = isSystemInDarkTheme()
-            // Material You: match the device's actual system theme/wallpaper
-            // colors on Android 12+, fall back to stock Material3 below that.
-            val colorScheme = when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && dark -> dynamicDarkColorScheme(context)
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
-                dark -> darkColorScheme()
-                else -> lightColorScheme()
-            }
-            MaterialTheme(colorScheme = colorScheme) {
-                // Top/horizontal safe-drawing inset only here, NOT bottom --
-                // reading mode wants its content to actually draw behind the
-                // (now-transparent) nav bar rather than stop short of it.
-                // Edit mode/buttons/the section editor's field each add their
-                // own navigationBarsPadding() locally instead, so only
-                // reading mode gets the "extends under the nav bar" look.
-                Surface(modifier = Modifier.fillMaxSize()) {
-                    Box(
-                        modifier = Modifier.windowInsetsPadding(
-                            WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal)
-                        )
-                    ) {
-                        DailyObsiApp(startInEditMode = openEditMode, openSectionHeading = openSectionHeading)
-                    }
-                }
-            }
-        }
-    }
-}
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-fun DailyObsiApp(startInEditMode: Boolean = false, openSectionHeading: String? = null) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-    val scope = rememberCoroutineScope()
-
-    var dailyUri by remember { mutableStateOf(VaultPrefs.getTreeUri(context)) }
-    var templateUri by remember { mutableStateOf(VaultPrefs.getTemplateUri(context)) }
-    // No folder picked yet -> land straight on settings, nothing else to show.
-    var showSettings by remember { mutableStateOf(dailyUri == null) }
-    // Reading mode (rendered checkboxes) is the default -- raw markdown
-    // editing is an explicit opt-in via the top bar toggle.
-    var editMode by remember { mutableStateOf(false) }
-
-    var noteFile by remember { mutableStateOf<DocumentFile?>(null) }
-    var text by remember { mutableStateOf("") }
-    var viewingDate by remember { mutableStateOf(LocalDate.now()) }
-    // Only meaningful right after landing on an empty today: is there a
-    // yesterday note worth offering instead of jumping straight to "create"?
-    var yesterdayFile by remember { mutableStateOf<DocumentFile?>(null) }
-
-    // Section editor (pencil icon on a header, reading mode only): a separate
-    // page that edits just that header's body, not the whole note. Non-null
-    // line index means it's open; the draft is the extracted body text.
-    var editingSectionLine by remember { mutableStateOf<Int?>(null) }
-    var sectionDraft by remember { mutableStateOf("") }
-
-    // SAF calls (findFile/readText/writeText/createTodayFile) go through
-    // ContentResolver -> Binder IPC to the DocumentsProvider -- not
-    // guaranteed fast, especially against a large/actively-synced daily
-    // folder. Running any of that directly on the main thread risks an ANR
-    // ("Input dispatching timed out") the instant the provider's slow to
-    // answer; a real one hit exactly this path via onOpenYesterday (a plain
-    // findFile call) with a 5s+ stall. So every SAF call here is pushed onto
-    // Dispatchers.IO inside a coroutine -- loadNoteSuspend/persist's caller
-    // always resumes on Main to touch Compose state, but the SAF work itself
-    // never runs there.
-    suspend fun loadNoteSuspend(date: LocalDate) {
-        val uri = dailyUri ?: return
-        val startMs = System.currentTimeMillis()
-        val (file, content, yFile) = withContext(Dispatchers.IO) {
-            // Today and the yesterday-fallback are looked up in the SAME
-            // listing query via findFiles (not two separate DocumentFile.findFile
-            // calls) -- see its doc comment; this was the actual slow part
-            // the user was timing at startup, not readText.
-            val todayName = DailyNote.fileNameFor(date)
-            val yesterdayName = if (date == LocalDate.now()) DailyNote.fileNameFor(date.minusDays(1)) else null
-            val found = DailyNote.findFiles(context, uri, setOfNotNull(todayName, yesterdayName))
-            val f = found[todayName]
-            val c = f?.let { DailyNote.readText(context, it.uri) } ?: ""
-            val y = if (f == null) yesterdayName?.let { found[it] } else null
-            Triple(f, c, y)
-        }
-        android.util.Log.d("DailyObsiPerf", "loadNoteSuspend($date) took ${System.currentTimeMillis() - startMs}ms, found=${file != null}")
-        noteFile = file
-        text = content
-        viewingDate = date
-        editMode = false
-        yesterdayFile = yFile
-    }
-
-    fun loadNote(date: LocalDate) {
-        scope.launch { loadNoteSuspend(date) }
-    }
-
-    fun persist(newText: String) {
-        val file = noteFile ?: return
-        text = newText
-        scope.launch {
-            withContext(Dispatchers.IO) { DailyNote.writeText(context, file.uri, newText) }
-            // All widgets read from disk fresh on every recompose, so an
-            // in-app edit is just as capable of going stale on a placed
-            // widget as a widget-side tap is on another widget instance.
-            // requestWidgetRefresh (debounced), not refreshAllWidgets
-            // directly -- a raw call per write is exactly what caused real,
-            // confirmed data-staleness under rapid repeated widget taps (see
-            // WidgetKeys.kt), and persist() itself already fires rapidly
-            // during typing/autosave, so it's just as exposed to the same
-            // race.
-            requestWidgetRefresh(context)
-        }
-    }
-
-    // No Save button -- edit mode autosaves instead: periodically while
-    // typing, and immediately whenever edit mode is left (toggle or back).
-    fun exitEditMode() {
-        if (editMode) persist(text)
-        editMode = false
-    }
-
-    fun openSectionEditor(headerLineIndex: Int) {
-        val range = headerBodyLineRange(text, headerLineIndex)
-        sectionDraft = if (range.first > range.last) "" else text.lines().subList(range.first, range.last + 1).joinToString("\n")
-        editingSectionLine = headerLineIndex
-    }
-
-    fun cancelSectionEditor() { editingSectionLine = null }
-
-    fun saveSectionEditor() {
-        val headerLineIndex = editingSectionLine ?: return
-        // Nothing else can change `text` while this page is open, so the
-        // range computed at open time is still valid here.
-        val range = headerBodyLineRange(text, headerLineIndex)
-        persist(DailyNote.replaceLines(text, range, sectionDraft))
-        editingSectionLine = null
-    }
-
-    LaunchedEffect(dailyUri) {
-        if (dailyUri != null) {
-            loadNoteSuspend(LocalDate.now())
-            if (startInEditMode) editMode = true
-            // Widget 1 (EditShortcutWidget) passes the literal raw header
-            // line it was configured with -- match it verbatim against
-            // today's note (not by a stored line index, which would go
-            // stale the instant the note is a fresh file next day) and open
-            // the section editor for whichever line actually matches, if any.
-            if (openSectionHeading != null) {
-                val headerLineIndex = text.lines().indexOf(openSectionHeading)
-                if (headerLineIndex != -1) openSectionEditor(headerLineIndex)
-            }
-        }
-    }
-
-    LaunchedEffect(editMode) {
-        if (editMode) {
-            while (true) {
-                delay(10_000)
-                persist(text)
-            }
-        }
-    }
-
-    // Also autosave when the app is backgrounded/killed mid-edit, so a swipe-
-    // away or a phone call doesn't lose whatever hasn't hit the 10s tick yet.
-    val lifecycleOwner = LocalLifecycleOwner.current
-    DisposableEffect(lifecycleOwner) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_STOP && editMode) persist(text)
-            // Reload from disk on resume. `text` is loaded exactly once, via
-            // LaunchedEffect(dailyUri) on cold start / folder pick -- nothing
-            // ever re-read it after that. The widgets write straight to the
-            // file, so backgrounding the app, tapping a widget checkbox/
-            // progress a few times, then foregrounding again left the in-app
-            // reading view showing the pre-tap state indefinitely, with no
-            // way to tell it apart from an actual desync. This is very
-            // likely most (maybe all) of what looked like a widget staleness
-            // bug during a long testing session: the widget always read the
-            // file fresh and was correct, but the in-app screenshot used as
-            // "ground truth" to judge it was itself stale, more so the
-            // longer testing went on and the more taps had accumulated since
-            // the app was last actually loaded. Skipped while actively
-            // editing (editMode) or in the section editor -- reloading over
-            // in-progress unsaved typing would blow it away; those already
-            // autosave/exit through their own paths.
-            if (event == Lifecycle.Event.ON_START && dailyUri != null && !editMode && editingSectionLine == null) {
-                android.util.Log.d("DailyObsiPerf", "ON_START: reloading $viewingDate from disk")
-                loadNote(viewingDate)
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
-
-    // System back while editing exits to reading mode (autosaving), same as
-    // tapping the Edit/Read toggle -- instead of leaving the screen/app.
-    BackHandler(enabled = editMode) { exitEditMode() }
-
-    // System back while the section editor is open acts like Cancel.
-    BackHandler(enabled = editingSectionLine != null) { cancelSectionEditor() }
-
-    Scaffold(
-        // Scaffold reserves system-bar insets in its content padding by
-        // default -- but MainActivity's outer Box(Modifier.safeDrawingPadding())
-        // already does that for the whole app, so without this the bottom
-        // inset gets applied twice: once there, once here. Same background
-        // color both times so there's no visible seam (unlike the earlier
-        // Surface/safeDrawingPadding bug), just the reading/editing area's
-        // bottom sitting well above the screen's actual bottom edge.
-        contentWindowInsets = WindowInsets(0, 0, 0, 0),
-        topBar = {
-            TopAppBar(
-                // The file name is more useful screen real-estate than a
-                // static app label once a note's actually open.
-                title = {
-                    Text(
-                        when {
-                            editingSectionLine != null -> "Edit section"
-                            !showSettings && noteFile != null -> noteFile?.name ?: "DailyObsi"
-                            else -> "DailyObsi"
-                        },
-                        maxLines = 1,
-                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis
-                    )
-                },
-                actions = {
-                    if (editingSectionLine != null) {
-                        TextButton(onClick = ::cancelSectionEditor) { Text("Cancel") }
-                        TextButton(onClick = ::saveSectionEditor) { Text("Save") }
-                    } else if (showSettings) {
-                        if (dailyUri != null) {
-                            TextButton(onClick = { showSettings = false }) { Text("Done") }
-                        }
-                    } else {
-                        if (noteFile != null) {
-                            if (viewingDate != LocalDate.now()) {
-                                TextButton(onClick = { loadNote(LocalDate.now()) }) { Text("Back to today") }
-                            }
-                            TextButton(onClick = { if (editMode) exitEditMode() else editMode = true }) {
-                                Text(if (editMode) "Read" else "Edit")
-                            }
-                        }
-                        IconButton(onClick = { showSettings = true }) {
-                            Icon(Icons.Filled.Settings, contentDescription = "Settings")
-                        }
-                    }
-                }
-            )
-        }
-    ) { padding ->
-        if (editingSectionLine != null) {
-            SectionEditorScreen(
-                modifier = Modifier.padding(padding),
-                draft = sectionDraft,
-                onDraftChanged = { sectionDraft = it }
-            )
-        } else if (showSettings) {
-            SettingsScreen(
-                modifier = Modifier.padding(padding),
-                dailyUri = dailyUri,
-                templateUri = templateUri,
-                onDailyUriChanged = { dailyUri = it },
-                onTemplateUriChanged = { templateUri = it }
-            )
-        } else {
-            EditorScreen(
-                modifier = Modifier.padding(padding),
-                editMode = editMode,
-                noteFile = noteFile,
-                text = text,
-                dailyUri = dailyUri!!,
-                viewingDate = viewingDate,
-                yesterdayFile = yesterdayFile,
-                onToggleCheckbox = { lineIndex -> persist(DailyNote.toggleCheckbox(text, lineIndex)) },
-                onShiftIndent = { lineIndex, delta -> persist(DailyNote.shiftIndent(text, lineIndex, delta)) },
-                onMoveLine = { lineIndex, delta -> persist(DailyNote.moveLine(text, lineIndex, delta)) },
-                onSetLine = { lineIndex, newLine -> persist(DailyNote.replaceLine(text, lineIndex, newLine)) },
-                onEditSection = ::openSectionEditor,
-                onTextChanged = { text = it },
-                onOpenYesterday = { loadNote(LocalDate.now().minusDays(1)) },
-                onCreateToday = {
-                    scope.launch {
-                        val created = withContext(Dispatchers.IO) {
-                            DailyNote.createTodayFile(context, dailyUri!!, templateUri)
-                        }
-                        if (created != null) loadNoteSuspend(LocalDate.now())
-                    }
-                }
-            )
-        }
-    }
-}
-
-@Composable
-private fun SectionEditorScreen(
-    modifier: Modifier = Modifier,
-    draft: String,
-    onDraftChanged: (String) -> Unit,
-) {
-    // Same borderless/fullscreen raw-text editing as the main edit mode, just
-    // scoped to one header's body. Save/Cancel live in the top bar; there's
-    // no autosave here since leaving this page always resolves it either way.
-    MarkdownTextField(
-        value = draft,
-        onValueChange = onDraftChanged,
-        modifier = modifier.fillMaxSize().navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp),
-        keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-        textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        // Line indices from MarkdownTextField's overlay here are local to
-        // `draft` (not the full file), so these operate on `draft` itself via
-        // the same onDraftChanged the text editing already uses -- not on the
-        // file directly, which would go stale against `draft` until Save.
-        onShiftIndent = { lineIndex, delta -> onDraftChanged(DailyNote.shiftIndent(draft, lineIndex, delta)) },
-        onMoveLine = { lineIndex, delta -> onDraftChanged(DailyNote.moveLine(draft, lineIndex, delta)) }
-    )
-}
-
-@Composable
-private fun SettingsScreen(
-    modifier: Modifier = Modifier,
-    dailyUri: Uri?,
-    templateUri: Uri?,
-    onDailyUriChanged: (Uri) -> Unit,
-    onTemplateUriChanged: (Uri) -> Unit,
-) {
-    val context = androidx.compose.ui.platform.LocalContext.current
-
-    val pickDailyFolder = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocumentTree()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(
-                uri,
-                Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_GRANT_WRITE_URI_PERMISSION
-            )
-            VaultPrefs.setTreeUri(context, uri)
-            onDailyUriChanged(uri)
-        }
-    }
-
-    val pickTemplate = rememberLauncherForActivityResult(
-        ActivityResultContracts.OpenDocument()
-    ) { uri: Uri? ->
-        if (uri != null) {
-            context.contentResolver.takePersistableUriPermission(uri, Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            VaultPrefs.setTemplateUri(context, uri)
-            onTemplateUriChanged(uri)
-        }
-    }
-
-    Column(modifier = modifier.fillMaxSize().navigationBarsPadding().padding(16.dp)) {
-        Text("Settings", style = MaterialTheme.typography.titleLarge)
-        Spacer(Modifier.height(16.dp))
-
-        // Both pickers are direct and independent -- no vault root, no
-        // guessing subfolders. Point each at exactly the thing it names.
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                dailyUri?.let { DocumentFile.fromTreeUri(context, it)?.name } ?: "No daily folder picked",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f)
-            )
-            Button(onClick = { pickDailyFolder.launch(null) }) {
-                Text(if (dailyUri == null) "Choose daily folder" else "Change")
-            }
-        }
-
-        Spacer(Modifier.height(8.dp))
-
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                templateUri?.let { DocumentFile.fromSingleUri(context, it)?.name } ?: "No daily template picked",
-                style = MaterialTheme.typography.bodyMedium,
-                modifier = Modifier.weight(1f)
-            )
-            Button(onClick = { pickTemplate.launch(arrayOf("text/*", "*/*")) }) {
-                Text(if (templateUri == null) "Choose daily template" else "Change")
-            }
-        }
-    }
-}
-
-@Composable
-private fun EditorScreen(
-    modifier: Modifier = Modifier,
-    editMode: Boolean,
-    noteFile: DocumentFile?,
-    text: String,
-    dailyUri: Uri,
-    viewingDate: LocalDate,
-    yesterdayFile: DocumentFile?,
-    onToggleCheckbox: (lineIndex: Int) -> Unit,
-    onShiftIndent: (lineIndex: Int, delta: Int) -> Unit,
-    onMoveLine: (lineIndex: Int, delta: Int) -> Unit,
-    onSetLine: (lineIndex: Int, newLine: String) -> Unit,
-    onEditSection: (headerLineIndex: Int) -> Unit,
-    onTextChanged: (String) -> Unit,
-    onOpenYesterday: () -> Unit,
-    onCreateToday: () -> Unit,
-) {
-    // Edit mode goes edge-to-edge (no padding, no boxed frame) to give the
-    // raw text as much room as possible. Reading mode keeps left/right/top
-    // margins for readability, but NOT bottom -- MainActivity's outer Box
-    // deliberately no longer reserves the nav-bar inset, specifically so
-    // reading mode's list can draw all the way behind the (transparent) nav
-    // bar. Edit mode and the empty state (nothing scrollable to show
-    // through the nav bar, just buttons that need to stay tappable) opt
-    // back into that inset locally via navigationBarsPadding() instead.
-    val emptyState = noteFile == null
-    Column(
-        modifier = modifier.fillMaxSize()
-            .padding(
-                start = if (editMode) 0.dp else 16.dp,
-                end = if (editMode) 0.dp else 16.dp,
-                top = if (editMode) 0.dp else 16.dp,
-                bottom = 0.dp
-            )
-            .then(if (editMode || emptyState) Modifier.navigationBarsPadding() else Modifier)
-    ) {
-        if (noteFile == null) {
-            Box(modifier = Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
-                Text(
-                    "No note for ${DailyNote.fileNameFor(viewingDate)} yet.",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyLarge
+            DailyObsiTheme {
+                val model: DailyObsiViewModel = viewModel(
+                    factory = DailyObsiViewModel.Factory(
+                        application,
+                        startInEditMode,
+                        openSectionHeading,
+                    ),
                 )
-            }
-            if (yesterdayFile != null) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Button(onClick = onOpenYesterday, modifier = Modifier.weight(1f)) { Text("Open yesterday's note") }
-                    OutlinedButton(onClick = onCreateToday, modifier = Modifier.weight(1f)) { Text("Create today's note") }
+                Surface(Modifier.fillMaxSize()) {
+                    Box(
+                        Modifier.windowInsetsPadding(
+                            WindowInsets.safeDrawing.only(
+                                WindowInsetsSides.Top + WindowInsetsSides.Horizontal,
+                            ),
+                        ),
+                    ) {
+                        DailyObsiApp(model)
+                    }
                 }
-            } else {
-                Button(onClick = onCreateToday, modifier = Modifier.fillMaxWidth()) { Text("Create today's note") }
             }
-            return@Column
-        }
-
-        if (editMode) {
-            // Borderless/frameless -- no OutlinedTextField box, no Save button.
-            // Autosave (10s tick + on exit/backgrounding) is wired in DailyObsiApp.
-            MarkdownTextField(
-                value = text,
-                onValueChange = onTextChanged,
-                // No bottom padding here either -- same reasoning as reading
-                // mode's Column: it'd stack on top of the safe-area inset
-                // already reserved once, shrinking how far the field can
-                // actually scroll before its last line clears the gesture-nav area.
-                modifier = Modifier.fillMaxWidth().weight(1f).navigationBarsPadding().padding(start = 12.dp, end = 12.dp, top = 8.dp),
-                keyboardOptions = KeyboardOptions(capitalization = KeyboardCapitalization.Sentences),
-                // Reading mode's body text is bodyLarge (16sp) -- match that
-                // scale here too (was stuck at bodyMedium/14sp, way too small),
-                // just a hair smaller since edit mode also carries raw syntax.
-                textStyle = MaterialTheme.typography.bodyLarge.copy(fontSize = 15.sp, fontFamily = FontFamily.Monospace, color = MaterialTheme.colorScheme.onSurface),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                // Checkbox lines get the same swipe-to-indent + up/down
-                // reorder as reading mode -- line indices here are absolute
-                // into the file, matching what these callbacks expect.
-                onShiftIndent = onShiftIndent,
-                onMoveLine = onMoveLine
-            )
-        } else {
-            MarkdownView(
-                modifier = Modifier.fillMaxWidth().weight(1f),
-                text = text,
-                dailyUri = dailyUri,
-                viewingDate = viewingDate,
-                onToggleCheckbox = onToggleCheckbox,
-                onShiftIndent = onShiftIndent,
-                onMoveLine = onMoveLine,
-                onSetLine = onSetLine,
-                onEditSection = onEditSection
-            )
         }
     }
+}
+
+@Composable
+private fun DailyObsiTheme(content: @Composable () -> Unit) {
+    val context = androidx.compose.ui.platform.LocalContext.current
+    val dark = isSystemInDarkTheme()
+    val colors = when {
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && dark -> dynamicDarkColorScheme(context)
+        Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
+        dark -> darkColorScheme()
+        else -> lightColorScheme()
+    }
+    MaterialTheme(colorScheme = colors, content = content)
 }

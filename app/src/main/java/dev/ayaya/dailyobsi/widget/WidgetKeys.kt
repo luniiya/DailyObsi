@@ -6,7 +6,7 @@ import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.sync.Mutex
+import dev.ayaya.dailyobsi.storage.noteWriteMutex
 
 /**
  * Per-widget-instance persisted state: "which heading is this instance
@@ -83,8 +83,6 @@ suspend fun refreshAllWidgets(context: Context) {
  * for the refresh side, deliberately *not* held under this lock) forces
  * writes to run one at a time instead.
  */
-val noteWriteMutex = Mutex()
-
 /**
  * Round 1 of fixing "widget shows stale data after rapid taps" held
  * [refreshAllWidgets] (plus a fixed settle delay) inside [noteWriteMutex]'s

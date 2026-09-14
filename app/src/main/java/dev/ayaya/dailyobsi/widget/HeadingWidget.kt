@@ -71,7 +71,7 @@ class HeadingWidget : GlanceAppWidget() {
             // here, recomposition never happens and everything below stays
             // frozen at whatever it was on first placement.
             val prefs = currentState<Preferences>()
-            android.util.Log.d("DailyObsiWidget", "HeadingWidget content: RECOMPOSED id=$id state=$prefs")
+            android.util.Log.d("DailyObsiWidget", "HeadingWidget content recomposed for id=$id")
             val rawHeading = prefs[SELECTED_HEADING_KEY]
             val emoji = prefs[SELECTED_EMOJI_KEY]?.ifBlank { null } ?: DEFAULT_WIDGET_EMOJI
 

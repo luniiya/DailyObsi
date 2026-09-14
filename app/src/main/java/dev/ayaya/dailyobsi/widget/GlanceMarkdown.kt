@@ -43,6 +43,7 @@ import dev.ayaya.dailyobsi.Block
 import dev.ayaya.dailyobsi.CHECKBOX_LINE
 import dev.ayaya.dailyobsi.CODE_BG
 import dev.ayaya.dailyobsi.DailyNote
+import dev.ayaya.dailyobsi.storage.noteWriteMutex
 import dev.ayaya.dailyobsi.EMBED_LINE
 import dev.ayaya.dailyobsi.HEADER
 import dev.ayaya.dailyobsi.HR
@@ -626,10 +627,12 @@ class GlanceCheckboxToggleAction : ActionCallback {
         noteWriteMutex.withLock {
             val text = DailyNote.readText(context, file.uri)
             val line = text.lines().getOrNull(lineIndex)
-            android.util.Log.d(tag, "GlanceCheckboxToggleAction: lineIndex=$lineIndex before=\"$line\"")
             val newText = DailyNote.toggleCheckbox(text, lineIndex)
             val newLine = newText.lines().getOrNull(lineIndex)
-            android.util.Log.d(tag, "GlanceCheckboxToggleAction: lineIndex=$lineIndex after=\"$newLine\" (unchanged=${line == newLine})")
+            android.util.Log.d(
+                tag,
+                "Glance checkbox line=$lineIndex changed=${line != newLine}",
+            )
             DailyNote.writeText(context, file.uri, newText)
         }
         requestWidgetRefresh(context)
@@ -669,20 +672,19 @@ class GlanceProgressDeltaAction : ActionCallback {
         noteWriteMutex.withLock {
             val text = DailyNote.readText(context, file.uri)
             val line = text.lines().getOrNull(lineIndex)
-            android.util.Log.d(tag, "GlanceProgressDeltaAction: lineIndex=$lineIndex before=\"$line\"")
             if (line == null) {
                 android.util.Log.w(tag, "GlanceProgressDeltaAction: lineIndex $lineIndex out of range (file has ${text.lines().size} lines), bailing")
                 return@withLock
             }
             val value = line.substringAfter("value:", "").trim().toIntOrNull()
             if (value == null) {
-                android.util.Log.w(tag, "GlanceProgressDeltaAction: couldn't parse an int value out of \"$line\", bailing")
+                android.util.Log.w(tag, "Glance progress value was invalid at line=$lineIndex")
                 return@withLock
             }
             val newValue = (value + delta).coerceIn(0, max)
             val leading = leadingWhitespaceOf(line)
             val newLine = "${leading}value: $newValue"
-            android.util.Log.d(tag, "GlanceProgressDeltaAction: lineIndex=$lineIndex after=\"$newLine\"")
+            android.util.Log.d(tag, "Glance progress changed at line=$lineIndex")
             DailyNote.writeText(context, file.uri, DailyNote.replaceLine(text, lineIndex, newLine))
         }
         // Debounced, not a raw refreshAllWidgets() call -- see

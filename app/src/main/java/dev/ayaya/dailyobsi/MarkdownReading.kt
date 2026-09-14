@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Edit
@@ -39,6 +40,8 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,8 +65,9 @@ import androidx.compose.ui.text.withLink
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import coil.compose.AsyncImage
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
+import coil.request.ImageRequest
+import dev.ayaya.dailyobsi.storage.AttachmentResolver
+import dev.ayaya.dailyobsi.storage.AttachmentState
 import java.time.LocalDate
 import java.time.temporal.ChronoUnit
 import kotlin.math.abs
@@ -254,9 +258,25 @@ fun MarkdownView(
     onShiftIndent: (lineIndex: Int, delta: Int) -> Unit,
     onMoveLine: (lineIndex: Int, delta: Int) -> Unit,
     onSetLine: (lineIndex: Int, newLine: String) -> Unit,
-    onEditSection: (headerLineIndex: Int) -> Unit,
+    onEditSection: ((headerLineIndex: Int) -> Unit)? = null,
+    readOnly: Boolean = false,
+    onAtTopChanged: (Boolean) -> Unit = {},
 ) {
     val blocks = remember(text) { parseBlocks(text) }
+    val embedNames = remember(blocks) {
+        blocks.mapNotNull { block ->
+            (block as? Block.Line)?.raw?.let(EMBED_LINE::matchEntire)
+                ?.groupValues?.get(1)?.substringBefore('|')?.trim()
+        }.toSet()
+    }
+    val context = LocalContext.current
+    val attachments by produceState(
+        initialValue = AttachmentResolver.snapshot(dailyUri, embedNames),
+        key1 = dailyUri,
+        key2 = embedNames,
+    ) {
+        value = AttachmentResolver.resolve(context, dailyUri, embedNames)
+    }
     val totalLines = remember(text) { text.lines().size }
     // Collapsed state per header line index. Keyed on the note being viewed
     // (not on `text`) so toggling a checkbox/indent elsewhere doesn't reset
@@ -288,12 +308,26 @@ fun MarkdownView(
     // nav bar rather than clear of it. contentPadding at the bottom equal to
     // the nav bar's actual height gives the list that extra room to scroll
     // into, so the true end of the note always ends up visible above the bar.
-    val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues().calculateBottomPadding()
-    LazyColumn(modifier = modifier, contentPadding = PaddingValues(bottom = navBarBottomPadding)) {
+    val listState = rememberLazyListState()
+    val latestOnAtTopChanged by rememberUpdatedState(onAtTopChanged)
+    androidx.compose.runtime.LaunchedEffect(listState) {
+        snapshotFlow {
+            listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0
+        }.collect(latestOnAtTopChanged)
+    }
+    val navBarBottomPadding = WindowInsets.navigationBars.asPaddingValues()
+        .calculateBottomPadding()
+    LazyColumn(
+        state = listState,
+        modifier = modifier,
+        contentPadding = PaddingValues(bottom = navBarBottomPadding),
+    ) {
         items(visibleBlocks) { block ->
             when (block) {
                 is Block.Code ->
-                    if (block.lang == "progressbar") ProgressBarBlock(block, onSetLine)
+                    if (block.lang == "progressbar") {
+                        ProgressBarBlock(block, if (readOnly) null else onSetLine)
+                    }
                     else CodeBlock(block.body)
                 is Block.Line -> MarkdownLine(
                     line = block.raw,
@@ -304,7 +338,9 @@ fun MarkdownView(
                     onShiftIndent = onShiftIndent,
                     onMoveLine = onMoveLine,
                     onToggleHeaderCollapse = { idx -> collapsedHeaders[idx] = !(collapsedHeaders[idx] ?: false) },
-                    onEditSection = onEditSection
+                    onEditSection = onEditSection,
+                    readOnly = readOnly,
+                    attachments = attachments,
                 )
             }
         }
@@ -321,7 +357,9 @@ private fun MarkdownLine(
     onShiftIndent: (Int, Int) -> Unit,
     onMoveLine: (Int, Int) -> Unit,
     onToggleHeaderCollapse: (Int) -> Unit,
-    onEditSection: (Int) -> Unit,
+    onEditSection: ((Int) -> Unit)?,
+    readOnly: Boolean,
+    attachments: Map<String, AttachmentState>,
 ) {
     // Resolved once here (Material You dynamic accent, not the old hardcoded
     // LINK_COLOR blue) and threaded into every parseInline call below --
@@ -341,11 +379,16 @@ private fun MarkdownLine(
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(start = (indent * 20).dp)
-                    .clickable { onToggleCheckbox(lineIndex) }
+                    .clickable(enabled = !readOnly) { onToggleCheckbox(lineIndex) }
                     // Swipe right/left does what the old ⇤/⇥ buttons did --
                     // indent/outdent this line (also reused by the edit-mode
                     // checkbox overlay, see detectSwipeToIndent).
-                    .pointerInput(lineIndex) { detectSwipeToIndent(lineIndex, onShiftIndent) }
+                    .then(
+                        if (readOnly) Modifier
+                        else Modifier.pointerInput(lineIndex) {
+                            detectSwipeToIndent(lineIndex, onShiftIndent)
+                        },
+                    )
                     .padding(vertical = 3.dp)
             ) {
                 // It's not just the checkbox glyph that made rows feel huge
@@ -357,7 +400,9 @@ private fun MarkdownLine(
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                     Checkbox(
                         checked = checked,
-                        onCheckedChange = { onToggleCheckbox(lineIndex) },
+                        onCheckedChange = if (readOnly) null else {
+                            { onToggleCheckbox(lineIndex) }
+                        },
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -371,28 +416,42 @@ private fun MarkdownLine(
                 )
                 // Reorders this line up/down in the raw file (swap with the
                 // adjacent line). Indent shifting moved to the swipe above.
-                Icon(
-                    Icons.Filled.KeyboardArrowUp,
-                    contentDescription = "Move up",
-                    tint = if (lineIndex > 0) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant,
-                    modifier = Modifier
-                        .clickable(enabled = lineIndex > 0) { onMoveLine(lineIndex, -1) }
-                        .padding(horizontal = 4.dp)
-                        .size(22.dp)
-                )
-                Icon(
-                    Icons.Filled.KeyboardArrowDown,
-                    contentDescription = "Move down",
-                    tint = if (lineIndex < totalLines - 1) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.outlineVariant,
-                    modifier = Modifier
-                        .clickable(enabled = lineIndex < totalLines - 1) { onMoveLine(lineIndex, 1) }
-                        .padding(horizontal = 4.dp)
-                        .size(22.dp)
-                )
+                if (!readOnly) {
+                    Icon(
+                        Icons.Filled.KeyboardArrowUp,
+                        contentDescription = "Move up",
+                        tint = if (lineIndex > 0) MaterialTheme.colorScheme.onSurface
+                        else MaterialTheme.colorScheme.outlineVariant,
+                        modifier = Modifier
+                            .clickable(enabled = lineIndex > 0) {
+                                onMoveLine(lineIndex, -1)
+                            }
+                            .padding(horizontal = 4.dp)
+                            .size(22.dp),
+                    )
+                    Icon(
+                        Icons.Filled.KeyboardArrowDown,
+                        contentDescription = "Move down",
+                        tint = if (lineIndex < totalLines - 1) {
+                            MaterialTheme.colorScheme.onSurface
+                        } else {
+                            MaterialTheme.colorScheme.outlineVariant
+                        },
+                        modifier = Modifier
+                            .clickable(enabled = lineIndex < totalLines - 1) {
+                                onMoveLine(lineIndex, 1)
+                            }
+                            .padding(horizontal = 4.dp)
+                            .size(22.dp),
+                    )
+                }
             }
         }
 
-        embedMatch != null -> EmbedImage(name = embedMatch.groupValues[1], dailyUri = dailyUri)
+        embedMatch != null -> {
+            val name = embedMatch.groupValues[1].substringBefore('|').trim()
+            EmbedImage(name, attachments[name] ?: AttachmentState.Loading)
+        }
 
         TAGS_LINE.matches(line.trim()) -> Text(
             line.trim(),
@@ -432,15 +491,17 @@ private fun MarkdownLine(
                 // (see SectionEditorScreen) -- nested inside the row's own
                 // fold-toggle clickable, so tapping the pencil consumes the
                 // touch there and doesn't also fold/unfold the section.
-                Icon(
-                    Icons.Filled.Edit,
-                    contentDescription = "Edit section",
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier
-                        .clickable { onEditSection(lineIndex) }
-                        .padding(start = 8.dp)
-                        .size(18.dp)
-                )
+                if (!readOnly && onEditSection != null) {
+                    Icon(
+                        Icons.Filled.Edit,
+                        contentDescription = "Edit section",
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier
+                            .clickable { onEditSection(lineIndex) }
+                            .padding(start = 8.dp)
+                            .size(18.dp),
+                    )
+                }
             }
         }
 
@@ -485,25 +546,17 @@ private fun MarkdownLine(
  *  folder, so this may not find anything -- falls back to a text placeholder
  *  rather than failing silently, so it's obvious the image just isn't reachable. */
 @Composable
-private fun EmbedImage(name: String, dailyUri: Uri) {
+private fun EmbedImage(name: String, state: AttachmentState) {
     val context = LocalContext.current
-    // LazyColumn disposes/recomposes items that scroll out of the viewport
-    // and back in, which would otherwise re-run the (slow, bounded-depth SAF
-    // DFS) attachment search -- and re-fetch/redecode the image -- every
-    // single time, showing a "reload" flash. Cache resolved URIs across
-    // recompositions (process-lifetime, not tied to any one composition).
-    val cacheKey = remember(dailyUri, name) { "$dailyUri|$name" }
-    val uri by produceState<Uri?>(initialValue = attachmentUriCache[cacheKey], key1 = cacheKey) {
-        if (!attachmentUriCache.containsKey(cacheKey)) {
-            value = withContext(Dispatchers.IO) {
-                DailyNote.findAttachment(context, dailyUri, name)?.uri
-            }
-            attachmentUriCache[cacheKey] = value
+    if (state is AttachmentState.Found) {
+        val request = remember(state.uri) {
+            ImageRequest.Builder(context)
+                .data(state.uri)
+                .memoryCacheKey(state.uri.toString())
+                .build()
         }
-    }
-    if (uri != null) {
         AsyncImage(
-            model = uri,
+            model = request,
             contentDescription = name,
             contentScale = ContentScale.FillWidth,
             modifier = Modifier
@@ -512,13 +565,20 @@ private fun EmbedImage(name: String, dailyUri: Uri) {
                 .padding(vertical = 4.dp)
                 .clip(RoundedCornerShape(12.dp))
         )
-    } else {
+    } else if (state is AttachmentState.Missing) {
         Text(
             "🖼 $name (not found in daily folder)",
             color = MUTED,
             fontStyle = FontStyle.Italic,
             style = MaterialTheme.typography.bodyMedium,
             modifier = Modifier.padding(vertical = 4.dp)
+        )
+    } else {
+        Text(
+            "Loading image…",
+            color = MUTED,
+            style = MaterialTheme.typography.bodyMedium,
+            modifier = Modifier.padding(vertical = 4.dp),
         )
     }
 }
@@ -541,7 +601,7 @@ private fun CodeBlock(body: List<String>) {
  *  gets +/- controls that rewrite the block's `value:` line and autosave
  *  through [onSetLine] (same path the checkbox toggle uses). */
 @Composable
-private fun ProgressBarBlock(block: Block.Code, onSetLine: (Int, String) -> Unit) {
+private fun ProgressBarBlock(block: Block.Code, onSetLine: ((Int, String) -> Unit)?) {
     val body = block.body
     val fields = body.mapNotNull { line ->
         val idx = line.indexOf(':')
@@ -552,7 +612,8 @@ private fun ProgressBarBlock(block: Block.Code, onSetLine: (Int, String) -> Unit
     val kind = fields["kind"] ?: "manual"
     val value = fields["value"]?.toIntOrNull()
     val max = fields["max"]?.toIntOrNull()
-    val interactive = kind == "manual" && fields["button"] == "true" && value != null && max != null
+    val interactive = onSetLine != null && kind == "manual" && fields["button"] == "true" &&
+        value != null && max != null
 
     val fraction: Float? = when (kind) {
         "manual" -> if (value != null && max != null && max > 0) (value.toFloat() / max).coerceIn(0f, 1f) else null
@@ -577,7 +638,7 @@ private fun ProgressBarBlock(block: Block.Code, onSetLine: (Int, String) -> Unit
         val bodyLineIdx = body.indexOfFirst { it.trim().startsWith("value:") }
         if (bodyLineIdx == -1) return
         val leading = leadingWhitespaceOf(body[bodyLineIdx])
-        onSetLine(block.firstBodyLine + bodyLineIdx, "${leading}value: $newValue")
+        onSetLine?.invoke(block.firstBodyLine + bodyLineIdx, "${leading}value: $newValue")
     }
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {

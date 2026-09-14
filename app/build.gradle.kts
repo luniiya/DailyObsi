@@ -69,6 +69,14 @@ android {
     lint {
         checkReleaseBuilds = false
         abortOnError = false
+        // These AndroidX detectors are binary-incompatible with the
+        // Kotlin analysis API bundled with AGP 8.7.3 and crash lint itself.
+        disable += setOf(
+            "NullSafeMutableLiveData",
+            "FrequentlyChangingValue",
+            "RememberInComposition",
+            "AutoboxingStateCreation",
+        )
     }
 }
 
@@ -76,6 +84,7 @@ dependencies {
     implementation("androidx.core:core-ktx:1.15.0")
     implementation("androidx.documentfile:documentfile:1.0.1")
     implementation("androidx.activity:activity-compose:1.9.3")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.7")
     // Bumped from 2024.12.01 specifically for the new TextFieldState-based
     // BasicTextField (androidx.compose.foundation.text.input), stable since
     // Compose Foundation 1.8.0 -- lets the edit-mode checkbox overlay share a
@@ -93,4 +102,11 @@ dependencies {
 
     // Renders ![[embed]] images straight from a content:// SAF Uri, no manual bitmap decoding.
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")
+    androidTestImplementation(platform("androidx.compose:compose-bom:2025.09.00"))
+    androidTestImplementation("androidx.compose.ui:ui-test-junit4")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    debugImplementation("androidx.compose.ui:ui-test-manifest")
 }
