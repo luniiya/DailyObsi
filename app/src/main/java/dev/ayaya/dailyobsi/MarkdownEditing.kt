@@ -57,6 +57,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -437,6 +438,8 @@ fun MarkdownTextField(
     onShiftIndent: ((lineIndex: Int, delta: Int) -> Unit)? = null,
     onMoveLine: ((lineIndex: Int, delta: Int) -> Unit)? = null,
     onAtTopChanged: (Boolean) -> Unit = {},
+    /** Space reserved below the text for floating editor actions. */
+    bottomContentPadding: Dp = 0.dp,
 ) {
     val state = rememberTextFieldState(initialText = value)
     // Dynamic theme accent, not a hardcoded blue -- see markdownOutputTransformation's
@@ -489,11 +492,21 @@ fun MarkdownTextField(
     }
     val density = LocalDensity.current
     val checkboxSizePx = with(density) { 18.dp.roundToPx() }
+    val bubbleOpaqueAtBottom = scrollState.value >=
+        (scrollState.maxValue - with(density) { 16.dp.roundToPx() }).coerceAtLeast(0)
 
     Box(modifier = modifier) {
         BasicTextField(
             state = state,
-            modifier = Modifier.fillMaxSize(),
+            // Keep the final lines scrollable above the floating action
+            // controls. Without this inset, long notes can disappear under
+            // the line utility bubble/FAB while the keyboard is open.
+            // Only reserve space when the scroll is at the end. In the
+            // middle of a note the toolbar can float over the document like
+            // Obsidian's mobile toolbar, without creating a blank strip.
+            modifier = Modifier.fillMaxSize().padding(
+                bottom = if (bubbleOpaqueAtBottom) bottomContentPadding else 0.dp,
+            ),
             keyboardOptions = keyboardOptions,
             textStyle = textStyle,
             cursorBrush = cursorBrush,
@@ -557,7 +570,16 @@ fun MarkdownTextField(
             Surface(
                 shape = RoundedCornerShape(14.dp),
                 tonalElevation = 4.dp,
-                modifier = Modifier.align(Alignment.BottomEnd).imePadding().padding(8.dp)
+                // Keep the utility visually light while scrolling, but give
+                // it a readable backing at the end of a note so the final
+                // lines cannot show through the controls.
+                color = if (bubbleOpaqueAtBottom) {
+                    MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
+                } else {
+                    Color.Transparent
+                },
+                modifier = Modifier.align(Alignment.BottomStart)
+                    .padding(start = 8.dp, bottom = 8.dp),
             ) {
                 CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                     Row(verticalAlignment = Alignment.CenterVertically) {

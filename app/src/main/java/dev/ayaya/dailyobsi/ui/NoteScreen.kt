@@ -67,7 +67,6 @@ fun NoteScreen(
     Box(Modifier.fillMaxSize().padding(padding)) {
         Column(Modifier.fillMaxSize()) {
             state.message?.let { ErrorNotice(it, model::clearMessage) }
-            if (state.isHistorical) HistoricalBanner(state, model)
 
             when {
                 state.document == null -> EmptyNote(state, model)
@@ -86,6 +85,8 @@ fun NoteScreen(
         if (state.document != null && !state.isHistorical) {
             ModeToggleFab(
                 mode = activeMode,
+                // Keep the confirmation FAB clear of the editor utility
+                // bubble and leave a comfortable text-safe area below it.
                 bottomPadding = if (showBottomBar) 80.dp else 16.dp,
                 onToggle = {
                     if (activeMode == SectionMode.WRITE) model.saveNow()
@@ -105,25 +106,6 @@ fun NoteScreen(
         }
         if (state.isLoading || state.isCreating) {
             CircularProgressIndicator(Modifier.align(Alignment.Center))
-        }
-    }
-}
-
-@Composable
-private fun HistoricalBanner(state: EditorUiState, model: DailyObsiViewModel) {
-    Row(
-        Modifier.fillMaxWidth()
-            .padding(horizontal = 16.dp, vertical = 6.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.SpaceBetween,
-    ) {
-        Text(
-            "Viewing ${state.viewingDate} · Read only",
-            style = MaterialTheme.typography.labelLarge,
-            color = MaterialTheme.colorScheme.tertiary,
-        )
-        TextButton(onClick = { model.loadDate(java.time.LocalDate.now()) }) {
-            Text("Back to today")
         }
     }
 }
@@ -291,7 +273,6 @@ private fun SectionTextEditor(
         onValueChange = { model.updateSection(section.id, it) },
         modifier = Modifier.fillMaxSize()
             .imePadding()
-            .navigationBarsPadding()
             .padding(horizontal = 12.dp, vertical = 8.dp),
         textStyle = MaterialTheme.typography.bodyLarge.copy(
             fontSize = 15.sp,
@@ -299,6 +280,7 @@ private fun SectionTextEditor(
             color = MaterialTheme.colorScheme.onSurface,
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+        bottomContentPadding = 64.dp,
         onShiftIndent = { line, delta ->
             model.updateSection(
                 section.id,
@@ -329,7 +311,6 @@ private fun ClassicNote(
                 onValueChange = { model.updateWholeNote(it) },
                 modifier = Modifier.fillMaxSize()
                     .imePadding()
-                    .navigationBarsPadding()
                     .padding(horizontal = 12.dp, vertical = 8.dp),
                 textStyle = MaterialTheme.typography.bodyLarge.copy(
                     fontSize = 15.sp,
@@ -337,6 +318,7 @@ private fun ClassicNote(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+                bottomContentPadding = 64.dp,
                 onShiftIndent = { line, delta ->
                     model.updateWholeNote(DailyNote.shiftIndent(document.text, line, delta))
                 },

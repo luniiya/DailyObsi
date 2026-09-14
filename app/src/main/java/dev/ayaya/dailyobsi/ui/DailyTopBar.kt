@@ -8,6 +8,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.DateRange
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Star
@@ -31,8 +32,21 @@ fun DailyTopBar(
     model: DailyObsiViewModel,
 ) {
     TopAppBar(
+        navigationIcon = {
+            if (state.isHistorical && !state.showSettings) {
+                IconButton(onClick = { model.loadDate(java.time.LocalDate.now()) }) {
+                    Icon(
+                        Icons.AutoMirrored.Filled.ArrowBack,
+                        contentDescription = "Back to today",
+                    )
+                }
+            }
+        },
         title = {
             if (state.showSettings) Text("Settings")
+            else if (state.isHistorical) {
+                Text("${state.viewingDate} · Read only", maxLines = 1)
+            }
             else if (showMemories) MemoryChips(state, model)
             else Spacer(Modifier.width(1.dp))
         },
@@ -74,7 +88,7 @@ private fun MemoryChips(state: EditorUiState, model: DailyObsiViewModel) {
                         modifier = Modifier.size(18.dp),
                     )
                 },
-                label = { Text("${date.year} memory", maxLines = 1) },
+                label = { Text(date.year.toString(), maxLines = 1) },
             )
         }
     }
