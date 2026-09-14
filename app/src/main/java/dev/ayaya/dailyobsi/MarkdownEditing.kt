@@ -7,12 +7,18 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.fillMaxHeight
+import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
@@ -43,6 +49,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalDensity
@@ -76,12 +83,6 @@ import kotlin.math.roundToInt
  */
 
 private const val LOG_TAG = "DailyObsiEdit"
-private const val TRAILING_SPACER_LINES = 24
-
-private fun editorDisplayText(value: String): String = value + "\n".repeat(TRAILING_SPACER_LINES)
-
-private fun editorContentText(value: String): String =
-    value.removeSuffix("\n".repeat(TRAILING_SPACER_LINES))
 
 private fun AnnotatedString.Builder.appendEditableInline(raw: String, linkColor: Color) {
     var i = 0
@@ -444,7 +445,7 @@ fun MarkdownTextField(
     onMoveLine: ((lineIndex: Int, delta: Int) -> Unit)? = null,
     onAtTopChanged: (Boolean) -> Unit = {},
 ) {
-    val state = rememberTextFieldState(initialText = editorDisplayText(value))
+    val state = rememberTextFieldState(initialText = value)
     // Dynamic theme accent, not a hardcoded blue -- see markdownOutputTransformation's
     // doc comment.
     val linkColor = MaterialTheme.colorScheme.primary
@@ -466,15 +467,15 @@ fun MarkdownTextField(
     // on the next recomposition, so this only actually fires for those
     // external changes.
     LaunchedEffect(value) {
-        if (editorContentText(state.text.toString()) != value) {
-            val oldText = editorContentText(state.text.toString())
+        if (state.text.toString() != value) {
+            val oldText = state.text.toString()
             val oldOffset = state.selection.start.coerceIn(0, oldText.length)
             val pending = pendingCursorFollow
             pendingCursorFollow = null
             val newOffset = resolveCursorFollow(oldText, oldOffset, value, pending)
             Log.d(LOG_TAG, "resync: cursor $oldOffset -> $newOffset (pending=$pending, len ${oldText.length} -> ${value.length})")
             state.edit {
-                replace(0, length, editorDisplayText(value))
+                replace(0, length, value)
                 placeCursorBeforeCharAt(newOffset)
             }
         }
@@ -483,8 +484,7 @@ fun MarkdownTextField(
     val latestOnValueChange by rememberUpdatedState(onValueChange)
     LaunchedEffect(state) {
         snapshotFlow { state.text.toString() }.collect { changed ->
-            val content = editorContentText(changed)
-            if (content != latestValue) latestOnValueChange(content)
+            if (changed != latestValue) latestOnValueChange(changed)
         }
     }
 
@@ -498,17 +498,45 @@ fun MarkdownTextField(
     val checkboxSizePx = with(density) { 18.dp.roundToPx() }
 
     Box(modifier = modifier) {
-        BasicTextField(
+        val scrollbarTrack = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.18f)
+        val scrollbarThumb = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f)
+        Column(Modifier.fillMaxSize().verticalScroll(scrollState)) {
+            BasicTextField(
             state = state,
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxWidth(),
             keyboardOptions = keyboardOptions,
             textStyle = textStyle,
             cursorBrush = cursorBrush,
-            scrollState = scrollState,
             onTextLayout = { layoutResult = it() },
             inputTransformation = listContinuationInputTransformation,
             outputTransformation = remember(linkColor) { markdownOutputTransformation(linkColor) },
-        )
+            )
+            Spacer(Modifier.height(420.dp))
+        }
+        if (scrollState.maxValue > 0) {
+            Box(
+                Modifier.align(Alignment.CenterEnd)
+                    .fillMaxHeight()
+                    .padding(vertical = 6.dp)
+                    .drawWithContent {
+                        val trackHeight = size.height
+                        val thumbHeight = (trackHeight * trackHeight / (trackHeight + scrollState.maxValue)).coerceAtLeast(48.dp.toPx())
+                        val travel = trackHeight - thumbHeight
+                        val top = travel * (scrollState.value / scrollState.maxValue.toFloat())
+                        drawRoundRect(
+                            color = scrollbarTrack,
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()),
+                            size = androidx.compose.ui.geometry.Size(4.dp.toPx(), trackHeight),
+                        )
+                        drawRoundRect(
+                            color = scrollbarThumb,
+                            topLeft = androidx.compose.ui.geometry.Offset(size.width - 4.dp.toPx(), top),
+                            cornerRadius = androidx.compose.ui.geometry.CornerRadius(3.dp.toPx()),
+                            size = androidx.compose.ui.geometry.Size(4.dp.toPx(), thumbHeight),
+                        )
+                    },
+            )
+        }
 
         val lr = layoutResult
         val textLen = lr?.layoutInput?.text?.length ?: 0
