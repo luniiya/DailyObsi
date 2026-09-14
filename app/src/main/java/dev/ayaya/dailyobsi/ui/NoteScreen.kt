@@ -280,7 +280,6 @@ private fun SectionTextEditor(
             color = MaterialTheme.colorScheme.onSurface,
         ),
         cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        bottomContentPadding = 64.dp,
         onShiftIndent = { line, delta ->
             model.updateSection(
                 section.id,
@@ -318,7 +317,6 @@ private fun ClassicNote(
                     color = MaterialTheme.colorScheme.onSurface,
                 ),
                 cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                bottomContentPadding = 64.dp,
                 onShiftIndent = { line, delta ->
                     model.updateWholeNote(DailyNote.shiftIndent(document.text, line, delta))
                 },

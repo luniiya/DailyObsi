@@ -7,11 +7,8 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.layout.Box
-import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
@@ -21,7 +18,6 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.text.input.InputTransformation
 import androidx.compose.foundation.text.input.OutputTransformation
-import androidx.compose.foundation.text.input.TextFieldDecorator
 import androidx.compose.foundation.text.input.delete
 import androidx.compose.foundation.text.input.insert
 import androidx.compose.foundation.text.input.rememberTextFieldState
@@ -61,7 +57,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextDecoration
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.IntOffset
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
@@ -448,19 +443,8 @@ fun MarkdownTextField(
     onShiftIndent: ((lineIndex: Int, delta: Int) -> Unit)? = null,
     onMoveLine: ((lineIndex: Int, delta: Int) -> Unit)? = null,
     onAtTopChanged: (Boolean) -> Unit = {},
-    /** Space reserved below the text for floating editor actions. */
-    bottomContentPadding: Dp = 0.dp,
 ) {
-    val state = rememberTextFieldState(initialText = editorDisplayText(value)).also {
-        LaunchedEffect(value) {
-            if (editorContentText(it.text.toString()) != value) {
-                it.edit {
-                    replace(0, length, editorDisplayText(value))
-                    placeCursorBeforeCharAt(value.length)
-                }
-            }
-        }
-    }
+    val state = rememberTextFieldState(initialText = editorDisplayText(value))
     // Dynamic theme accent, not a hardcoded blue -- see markdownOutputTransformation's
     // doc comment.
     val linkColor = MaterialTheme.colorScheme.primary
@@ -512,15 +496,10 @@ fun MarkdownTextField(
     }
     val density = LocalDensity.current
     val checkboxSizePx = with(density) { 18.dp.roundToPx() }
-    val bubbleOpaqueAtBottom = scrollState.value >=
-        (scrollState.maxValue - with(density) { 16.dp.roundToPx() }).coerceAtLeast(0)
 
     Box(modifier = modifier) {
         BasicTextField(
             state = state,
-            // Keep the final lines scrollable above the floating action
-            // controls. Without this inset, long notes can disappear under
-            // the line utility bubble/FAB while the keyboard is open.
             modifier = Modifier.fillMaxSize(),
             keyboardOptions = keyboardOptions,
             textStyle = textStyle,
@@ -529,14 +508,6 @@ fun MarkdownTextField(
             onTextLayout = { layoutResult = it() },
             inputTransformation = listContinuationInputTransformation,
             outputTransformation = remember(linkColor) { markdownOutputTransformation(linkColor) },
-            decorator = if (bottomContentPadding > 0.dp) {
-                TextFieldDecorator { innerTextField ->
-                    Column {
-                        innerTextField()
-                        Spacer(Modifier.height(bottomContentPadding))
-                    }
-                }
-            } else null,
         )
 
         val lr = layoutResult
@@ -592,16 +563,9 @@ fun MarkdownTextField(
             }
             Surface(
                 shape = RoundedCornerShape(14.dp),
-                tonalElevation = if (bubbleOpaqueAtBottom) 4.dp else 0.dp,
-                shadowElevation = if (bubbleOpaqueAtBottom) 2.dp else 0.dp,
-                // Keep the utility visually light while scrolling, but give
-                // it a readable backing at the end of a note so the final
-                // lines cannot show through the controls.
-                color = if (bubbleOpaqueAtBottom) {
-                    MaterialTheme.colorScheme.surface.copy(alpha = 0.92f)
-                } else {
-                    Color.Transparent
-                },
+                tonalElevation = 4.dp,
+                shadowElevation = 2.dp,
+                color = MaterialTheme.colorScheme.surfaceVariant,
                 modifier = Modifier.align(Alignment.BottomStart)
                     .padding(start = 8.dp, bottom = 8.dp),
             ) {
