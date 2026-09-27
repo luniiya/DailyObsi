@@ -24,18 +24,19 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Set up JDK 21
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
+      # v3 always installed the deprecated `tools` package, which Google
+      # removed from the SDK repo (~Sept 2026) -- that broke the v0.4 run.
       # app/build.gradle.kts pins this exact build-tools version (see
       # CLAUDE.md) -- it's not always what's pre-baked into the runner image.
-      - name: Install pinned build-tools/platform
-        run: sdkmanager "platforms;android-35" "build-tools;37.0.0"
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;37.0.0"
 
       # keystore.properties + the .jks are gitignored (see CLAUDE.md's
       # Signing section) and never committed -- reconstructed here from
