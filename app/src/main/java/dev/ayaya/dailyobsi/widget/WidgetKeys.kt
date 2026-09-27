@@ -4,6 +4,9 @@ import android.content.Context
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
+import android.net.Uri
+import dev.ayaya.dailyobsi.DailyNote
+import java.time.LocalDate
 import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.delay
 import dev.ayaya.dailyobsi.storage.noteWriteMutex
@@ -54,6 +57,7 @@ suspend fun refreshAllWidgets(context: Context) {
     // directly (not just "updateAll() returned") is the only way to tell
     // those two cases apart from logcat.
     val manager = GlanceAppWidgetManager(context)
+    widgetDataVersion.incrementAndGet()
     android.util.Log.d(tag, "refreshAllWidgets: starting")
     val editIds = manager.getGlanceIds(EditShortcutWidget::class.java)
     android.util.Log.d(tag, "refreshAllWidgets: EditShortcutWidget glanceIds=$editIds")
@@ -149,4 +153,42 @@ suspend fun requestWidgetRefresh(context: Context) {
     } else {
         android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: gen=$myGeneration superseded by ${refreshGeneration.get()}, skipping")
     }
+}
+
+/**
+ * Bumped by [refreshAllWidgets] right before it recomposes every widget.
+ * HeadingWidget/ReadingViewWidget key their `produceState` note load on it,
+ * so a refresh reloads the note on Dispatchers.IO instead of in the
+ * composable body. Glance runs widget composition on the app's *main*
+ * thread, so the old "plain blocking read directly in the composable" pattern
+ * put a full SAF folder listing + file read on the UI thread per widget per
+ * refresh -- the real cause of multi-second in-app freezes on every save
+ * (caught by sampling main-thread stacks: SessionWorker -> provideContent ->
+ * DailyNote.findTodayFile, only with widgets placed).
+ */
+val widgetDataVersion = AtomicLong(0)
+
+data class TodayNote(val name: String, val uri: Uri, val text: String)
+
+private data class CachedTodayFile(val treeUri: Uri, val date: LocalDate, val uri: Uri, val name: String)
+
+@Volatile private var cachedTodayFile: CachedTodayFile? = null
+
+/**
+ * Reads today's note, remembering its URI so repeat reads skip the
+ * folder listing (one query over ~500 files on the real vault). A cached URI
+ * that no longer reads (file deleted/renamed by a git pull) falls back to a
+ * fresh lookup. Blocking -- call from Dispatchers.IO only.
+ */
+fun readTodayNote(context: Context, treeUri: Uri): TodayNote? {
+    val today = LocalDate.now()
+    cachedTodayFile?.takeIf { it.treeUri == treeUri && it.date == today }?.let { cached ->
+        val text = runCatching { DailyNote.readText(context, cached.uri) }.getOrNull()
+        if (text != null) return TodayNote(cached.name, cached.uri, text)
+        cachedTodayFile = null
+    }
+    val file = DailyNote.findTodayFile(context, treeUri) ?: return null
+    val name = file.name ?: "Today"
+    cachedTodayFile = CachedTodayFile(treeUri, today, file.uri, name)
+    return TodayNote(name, file.uri, DailyNote.readText(context, file.uri))
 }

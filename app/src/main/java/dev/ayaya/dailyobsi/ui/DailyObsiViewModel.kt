@@ -41,9 +41,15 @@ class DailyObsiViewModel(
     private var revision = 0L
     private var startDestinationApplied = false
 
+    // Widgets aren't visible while the app is in the foreground, and
+    // re-rendering them isn't free (Glance composes + translates RemoteViews
+    // on this process's main thread), so saves only mark them stale; they
+    // catch up once in flushForBackground.
+    @Volatile private var widgetsStale = false
+
     private val saveCoordinator = SaveCoordinator<Uri>(viewModelScope) { value ->
         repository.write(value.target, value.text)
-        withContext(Dispatchers.IO) { requestWidgetRefresh(context) }
+        widgetsStale = true
     }
 
     private val mutableState = MutableStateFlow(
@@ -194,7 +200,13 @@ class DailyObsiViewModel(
     }
 
     fun flushForBackground() {
-        viewModelScope.launch { saveCoordinator.flush() }
+        viewModelScope.launch {
+            saveCoordinator.flush()
+            if (widgetsStale) {
+                widgetsStale = false
+                withContext(Dispatchers.IO) { requestWidgetRefresh(context) }
+            }
+        }
     }
 
     private fun refreshArchiveAndLoad(date: LocalDate) {

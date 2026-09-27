@@ -613,19 +613,21 @@ class GlanceCheckboxToggleAction : ActionCallback {
             android.util.Log.w(tag, "GlanceCheckboxToggleAction: no treeUri (daily folder not picked), bailing")
             return
         }
-        val file = DailyNote.findTodayFile(context, treeUri)
-        if (file == null) {
-            android.util.Log.w(tag, "GlanceCheckboxToggleAction: no today's file found, bailing")
-            return
-        }
         // See WidgetKeys.kt's noteWriteMutex doc comment -- write only,
         // stays fast, no artificial delay (that was tried and made rapid
         // tapping feel completely dead, a real regression). The refresh
         // side is debounced separately -- see requestWidgetRefresh's doc
         // comment for why a raw refreshAllWidgets() call per tap was the
         // actual bug.
-        noteWriteMutex.withLock {
-            val text = DailyNote.readText(context, file.uri)
+        // Off the main thread, and via readTodayNote's cached URI rather than
+        // re-listing the whole daily folder on every tap.
+        withContext(Dispatchers.IO) { noteWriteMutex.withLock {
+            val note = readTodayNote(context, treeUri)
+            if (note == null) {
+                android.util.Log.w(tag, "no today's file found, bailing")
+                return@withLock
+            }
+            val text = note.text
             val line = text.lines().getOrNull(lineIndex)
             val newText = DailyNote.toggleCheckbox(text, lineIndex)
             val newLine = newText.lines().getOrNull(lineIndex)
@@ -633,8 +635,8 @@ class GlanceCheckboxToggleAction : ActionCallback {
                 tag,
                 "Glance checkbox line=$lineIndex changed=${line != newLine}",
             )
-            DailyNote.writeText(context, file.uri, newText)
-        }
+            DailyNote.writeText(context, note.uri, newText)
+        } }
         requestWidgetRefresh(context)
         android.util.Log.d(tag, "GlanceCheckboxToggleAction: write done, refresh requested")
     }
@@ -663,14 +665,16 @@ class GlanceProgressDeltaAction : ActionCallback {
             android.util.Log.w(tag, "GlanceProgressDeltaAction: no treeUri, bailing")
             return
         }
-        val file = DailyNote.findTodayFile(context, treeUri)
-        if (file == null) {
-            android.util.Log.w(tag, "GlanceProgressDeltaAction: no today's file found, bailing")
-            return
-        }
         // See WidgetKeys.kt's noteWriteMutex doc comment.
-        noteWriteMutex.withLock {
-            val text = DailyNote.readText(context, file.uri)
+        // Off the main thread, and via readTodayNote's cached URI rather than
+        // re-listing the whole daily folder on every tap.
+        withContext(Dispatchers.IO) { noteWriteMutex.withLock {
+            val note = readTodayNote(context, treeUri)
+            if (note == null) {
+                android.util.Log.w(tag, "no today's file found, bailing")
+                return@withLock
+            }
+            val text = note.text
             val line = text.lines().getOrNull(lineIndex)
             if (line == null) {
                 android.util.Log.w(tag, "GlanceProgressDeltaAction: lineIndex $lineIndex out of range (file has ${text.lines().size} lines), bailing")
@@ -685,8 +689,8 @@ class GlanceProgressDeltaAction : ActionCallback {
             val leading = leadingWhitespaceOf(line)
             val newLine = "${leading}value: $newValue"
             android.util.Log.d(tag, "Glance progress changed at line=$lineIndex")
-            DailyNote.writeText(context, file.uri, DailyNote.replaceLine(text, lineIndex, newLine))
-        }
+            DailyNote.writeText(context, note.uri, DailyNote.replaceLine(text, lineIndex, newLine))
+        } }
         // Debounced, not a raw refreshAllWidgets() call -- see
         // requestWidgetRefresh's doc comment. This is exactly the action the
         // "pressing plus 200 times and it still shows 0/4" report came from:

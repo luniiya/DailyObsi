@@ -34,7 +34,9 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import android.net.Uri
 import dev.ayaya.dailyobsi.Block
-import dev.ayaya.dailyobsi.DailyNote
+import androidx.glance.appwidget.state.getAppWidgetState
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import dev.ayaya.dailyobsi.VaultPrefs
 import dev.ayaya.dailyobsi.headerBodyLineRange
 import dev.ayaya.dailyobsi.parseBlocks
@@ -62,55 +64,34 @@ class HeadingWidget : GlanceAppWidget() {
         val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
         val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
 
+        val initialPrefs = getAppWidgetState(context, PreferencesGlanceStateDefinition, id)
+        val initialHeading = initialPrefs[SELECTED_HEADING_KEY]
+        val initialVersion = widgetDataVersion.get()
+        val initial = loadHeading(context, initialHeading)
+
         provideContent {
             // currentState() subscribes this composable to LocalState, which
             // is what actually makes a later .update()/.updateAll() call
-            // (checkbox tap, progress tap, in-app edit via
-            // MainActivity.persist(), or HeadingPickerActivity reconfiguring
-            // this instance) reach this code again -- without reading it
-            // here, recomposition never happens and everything below stays
-            // frozen at whatever it was on first placement.
+            // (checkbox tap, progress tap, in-app edit, or
+            // HeadingPickerActivity reconfiguring this instance) reach this
+            // code again -- without reading it here, recomposition never
+            // happens and everything below stays frozen at first placement.
             val prefs = currentState<Preferences>()
-            android.util.Log.d("DailyObsiWidget", "HeadingWidget content recomposed for id=$id")
             val rawHeading = prefs[SELECTED_HEADING_KEY]
             val emoji = prefs[SELECTED_EMOJI_KEY]?.ifBlank { null } ?: DEFAULT_WIDGET_EMOJI
+            val version = widgetDataVersion.get()
 
-            // Deliberately NOT behind remember()/produceState's key-based
-            // memoization for the synchronous parts -- these are plain
-            // (non-suspend) blocking calls, called directly and
-            // unconditionally on every recomposition, exactly like
-            // TodoWidget.kt's proven-working pattern. Only the async embed-
-            // image resolution below needs produceState, since it's the one
-            // genuinely suspend part.
-            val treeUri = VaultPrefs.getTreeUri(context)
-            val sync: HeadingSync = when {
-                treeUri == null -> HeadingSync.NoFolder
-                else -> {
-                    val file = DailyNote.findTodayFile(context, treeUri)
-                    if (file == null) {
-                        HeadingSync.NoNoteToday
-                    } else {
-                        val text = DailyNote.readText(context, file.uri)
-                        val lines = text.lines()
-                        val headerLineIndex = rawHeading?.let { h -> lines.indexOfFirst { it == h } }
-                        if (rawHeading == null || headerLineIndex == null || headerLineIndex == -1) {
-                            HeadingSync.HeadingNotFound
-                        } else {
-                            val range = headerBodyLineRange(text, headerLineIndex)
-                            val blocks = parseBlocks(text).filter {
-                                val idx = when (it) { is Block.Line -> it.lineIndex; is Block.Code -> it.firstBodyLine }
-                                idx in range
-                            }
-                            HeadingSync.Loaded(rawHeading.trimStart('#', ' '), blocks, treeUri)
-                        }
-                    }
+            // The note load runs on Dispatchers.IO, never in this composable
+            // body: Glance composes on the app's main thread (see
+            // widgetDataVersion). Reloads when a refresh bumps the version or
+            // the instance is reconfigured to a different heading.
+            val loaded by produceState(initialValue = initial, rawHeading, version) {
+                if (rawHeading != initialHeading || version != initialVersion) {
+                    value = loadHeading(context, rawHeading)
                 }
             }
-            android.util.Log.d("DailyObsiWidget", "HeadingWidget content: sync computed = ${if (sync is HeadingSync.Loaded) "Loaded(title=${sync.title}, blocks=${sync.blocks.size})" else sync}")
-
-            val embeds by produceState(initialValue = emptyMap<String, ImageProvider>(), key1 = sync) {
-                value = if (sync is HeadingSync.Loaded) resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks) else emptyMap()
-            }
+            val sync = loaded.sync
+            val embeds = loaded.embeds
 
             GlanceTheme(colors = ColorProviders(light = light, dark = dark)) {
                 Column(
@@ -156,11 +137,37 @@ class HeadingWidget : GlanceAppWidget() {
     }
 }
 
-/** Synchronous half of the load (file read + block slicing) -- everything
- *  here is a plain blocking call, safe to run directly in the composable
- *  body on every recomposition. [Loaded] additionally carries [treeUri] so
- *  the async embed-resolution step below has what it needs without a second
- *  state read. */
+private class HeadingLoad(val sync: HeadingSync, val embeds: Map<String, ImageProvider>)
+
+/** File lookup + read + section slicing + embed decode, all on Dispatchers.IO. */
+private suspend fun loadHeading(context: Context, rawHeading: String?): HeadingLoad = withContext(Dispatchers.IO) {
+    val treeUri = VaultPrefs.getTreeUri(context)
+    val note = treeUri?.let { readTodayNote(context, it) }
+    val sync = when {
+        treeUri == null -> HeadingSync.NoFolder
+        note == null -> HeadingSync.NoNoteToday
+        else -> {
+            val headerLineIndex = rawHeading?.let { h -> note.text.lines().indexOfFirst { it == h } } ?: -1
+            if (headerLineIndex == -1) {
+                HeadingSync.HeadingNotFound
+            } else {
+                val range = headerBodyLineRange(note.text, headerLineIndex)
+                val blocks = parseBlocks(note.text).filter {
+                    val idx = when (it) { is Block.Line -> it.lineIndex; is Block.Code -> it.firstBodyLine }
+                    idx in range
+                }
+                HeadingSync.Loaded(rawHeading!!.trimStart('#', ' '), blocks, treeUri)
+            }
+        }
+    }
+    val embeds = if (sync is HeadingSync.Loaded) {
+        resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks)
+    } else {
+        emptyMap()
+    }
+    HeadingLoad(sync, embeds)
+}
+
 private sealed class HeadingSync {
     object NoFolder : HeadingSync()
     object NoNoteToday : HeadingSync()

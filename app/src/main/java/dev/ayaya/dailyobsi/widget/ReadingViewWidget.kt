@@ -38,10 +38,10 @@ import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import android.net.Uri
 import dev.ayaya.dailyobsi.Block
-import dev.ayaya.dailyobsi.CHECKBOX_LINE
-import dev.ayaya.dailyobsi.DailyNote
 import dev.ayaya.dailyobsi.VaultPrefs
 import dev.ayaya.dailyobsi.parseBlocks
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
  * Widget 3 of 3 (see CLAUDE.md's "Planned: three-widget system"): the whole
@@ -69,39 +69,24 @@ class ReadingViewWidget : GlanceAppWidget() {
         val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
         val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
 
+        val initialVersion = widgetDataVersion.get()
+        val initial = loadReadingView(context)
+
         provideContent {
             // Read but not otherwise used -- see the stateDefinition doc
             // comment above; this is purely what makes recomposition happen
             // on refresh at all.
-            val stateForRecompose = currentState<Preferences>()
-            android.util.Log.d("DailyObsiWidget", "ReadingViewWidget content: RECOMPOSED id=$id state=$stateForRecompose")
-
-            // Plain blocking calls, called directly and unconditionally on
-            // every recomposition -- same pattern as TodoWidget.kt and
-            // HeadingWidget.kt's HeadingSync, not memoized behind
-            // remember()/produceState, so this always reflects the file as
-            // it is right now rather than whatever it was on first placement.
-            val treeUri = VaultPrefs.getTreeUri(context)
-            val sync: ReadingSync = if (treeUri == null) {
-                ReadingSync.NoFolder
-            } else {
-                val file = DailyNote.findTodayFile(context, treeUri)
-                if (file == null) {
-                    ReadingSync.NoNoteToday
-                } else {
-                    val text = DailyNote.readText(context, file.uri)
-                    ReadingSync.Loaded(file.name ?: "Today", parseBlocks(text), treeUri)
-                }
+            currentState<Preferences>()
+            val version = widgetDataVersion.get()
+            // The note load runs on Dispatchers.IO, never in this composable
+            // body: Glance composes on the app's main thread (see
+            // widgetDataVersion). The first frame uses the load done above,
+            // before provideContent, so there's no empty flash on placement.
+            val loaded by produceState(initialValue = initial, version) {
+                if (version != initialVersion) value = loadReadingView(context)
             }
-            val syncSummary = when (sync) {
-                is ReadingSync.Loaded -> "Loaded(title=${sync.title}, blocks=${sync.blocks.size}, checkedCount=${sync.blocks.count { it is Block.Line && CHECKBOX_LINE.matches(it.raw) && it.raw.contains("[x]", ignoreCase = true) }})"
-                else -> sync.toString()
-            }
-            android.util.Log.d("DailyObsiWidget", "ReadingViewWidget content: sync computed = $syncSummary")
-
-            val embeds by produceState(initialValue = emptyMap<String, ImageProvider>(), key1 = sync) {
-                value = if (sync is ReadingSync.Loaded) resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks) else emptyMap()
-            }
+            val sync = loaded.sync
+            val embeds = loaded.embeds
 
             GlanceTheme(colors = ColorProviders(light = light, dark = dark)) {
                 Column(
@@ -172,6 +157,25 @@ class ReadingViewWidget : GlanceAppWidget() {
             }
         }
     }
+}
+
+private class ReadingLoad(val sync: ReadingSync, val embeds: Map<String, ImageProvider>)
+
+/** File lookup + read + parse + embed decode, all on Dispatchers.IO. */
+private suspend fun loadReadingView(context: Context): ReadingLoad = withContext(Dispatchers.IO) {
+    val treeUri = VaultPrefs.getTreeUri(context)
+    val note = treeUri?.let { readTodayNote(context, it) }
+    val sync = when {
+        treeUri == null -> ReadingSync.NoFolder
+        note == null -> ReadingSync.NoNoteToday
+        else -> ReadingSync.Loaded(note.name, parseBlocks(note.text), treeUri)
+    }
+    val embeds = if (sync is ReadingSync.Loaded) {
+        resolveEmbedImagesForGlance(context, sync.treeUri, sync.blocks)
+    } else {
+        emptyMap()
+    }
+    ReadingLoad(sync, embeds)
 }
 
 private sealed class ReadingSync {
