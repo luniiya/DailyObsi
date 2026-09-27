@@ -8,7 +8,6 @@ import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
@@ -41,7 +40,6 @@ import dev.ayaya.dailyobsi.MarkdownTextField
 import dev.ayaya.dailyobsi.MarkdownView
 import dev.ayaya.dailyobsi.model.LayoutMode
 import dev.ayaya.dailyobsi.model.NoteSection
-import dev.ayaya.dailyobsi.model.SaveStatus
 import dev.ayaya.dailyobsi.model.SectionMode
 import dev.ayaya.dailyobsi.model.canSwipeBetweenTabs
 import dev.ayaya.dailyobsi.model.effectiveSectionMode
@@ -211,82 +209,11 @@ private fun SectionPage(
     model: DailyObsiViewModel,
     onAtTopChanged: (Boolean) -> Unit,
 ) {
-    val mode = effectiveSectionMode(
-        state.isHistorical,
-        state.sectionModes[section.id] ?: SectionMode.READ,
-    )
-    Column(Modifier.fillMaxHeight()) {
-        if (mode == SectionMode.WRITE && !state.isHistorical) {
-            SectionTextEditor(section, model, onAtTopChanged)
-        } else {
-            val treeUri = state.dailyUri ?: return@Column
-            MarkdownView(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                text = section.body,
-                dailyUri = treeUri,
-                viewingDate = state.viewingDate,
-                onToggleCheckbox = { line ->
-                    model.updateSection(
-                        section.id,
-                        DailyNote.toggleCheckbox(section.body, line),
-                        immediate = true,
-                    )
-                },
-                onShiftIndent = { line, delta ->
-                    model.updateSection(
-                        section.id,
-                        DailyNote.shiftIndent(section.body, line, delta),
-                        immediate = true,
-                    )
-                },
-                onMoveLine = { line, delta ->
-                    model.updateSection(
-                        section.id,
-                        DailyNote.moveLine(section.body, line, delta),
-                        immediate = true,
-                    )
-                },
-                onSetLine = { line, value ->
-                    model.updateSection(
-                        section.id,
-                        DailyNote.replaceLine(section.body, line, value),
-                        immediate = true,
-                    )
-                },
-                readOnly = state.isHistorical,
-                onAtTopChanged = onAtTopChanged,
-            )
-        }
-    }
-}
-
-@Composable
-private fun SectionTextEditor(
-    section: NoteSection,
-    model: DailyObsiViewModel,
-    onAtTopChanged: (Boolean) -> Unit,
-) {
-    MarkdownTextField(
-        value = section.body,
-        onValueChange = { model.updateSection(section.id, it) },
-        modifier = Modifier.fillMaxSize()
-            .imePadding()
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        textStyle = MaterialTheme.typography.bodyLarge.copy(
-            fontSize = 15.sp,
-            fontFamily = FontFamily.Monospace,
-            color = MaterialTheme.colorScheme.onSurface,
-        ),
-        cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-        onShiftIndent = { line, delta ->
-            model.updateSection(
-                section.id,
-                DailyNote.shiftIndent(section.body, line, delta),
-            )
-        },
-        onMoveLine = { line, delta ->
-            model.updateSection(section.id, DailyNote.moveLine(section.body, line, delta))
-        },
+    NoteBody(
+        text = section.body,
+        mode = state.sectionModes[section.id] ?: SectionMode.READ,
+        state = state,
+        onChange = { body, immediate -> model.updateSection(section.id, body, immediate) },
         onAtTopChanged = onAtTopChanged,
     )
 }
@@ -298,98 +225,60 @@ private fun ClassicNote(
     onAtTopChanged: (Boolean) -> Unit,
 ) {
     val document = state.document ?: return
-    val treeUri = state.dailyUri ?: return
-    val mode = effectiveSectionMode(state.isHistorical, state.classicMode)
-    Column(Modifier.fillMaxSize()) {
-        ClassicStatusRow(state, mode, model)
-        if (mode == SectionMode.WRITE && !state.isHistorical) {
-            MarkdownTextField(
-                value = document.text,
-                onValueChange = { model.updateWholeNote(it) },
-                modifier = Modifier.fillMaxSize()
-                    .imePadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                textStyle = MaterialTheme.typography.bodyLarge.copy(
-                    fontSize = 15.sp,
-                    fontFamily = FontFamily.Monospace,
-                    color = MaterialTheme.colorScheme.onSurface,
-                ),
-                cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
-                onShiftIndent = { line, delta ->
-                    model.updateWholeNote(DailyNote.shiftIndent(document.text, line, delta))
-                },
-                onMoveLine = { line, delta ->
-                    model.updateWholeNote(DailyNote.moveLine(document.text, line, delta))
-                },
-                onAtTopChanged = onAtTopChanged,
-            )
-        } else {
-            MarkdownView(
-                modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                text = document.text,
-                dailyUri = treeUri,
-                viewingDate = state.viewingDate,
-                onToggleCheckbox = { line ->
-                    model.updateWholeNote(
-                        DailyNote.toggleCheckbox(document.text, line),
-                        immediate = true,
-                    )
-                },
-                onShiftIndent = { line, delta ->
-                    model.updateWholeNote(
-                        DailyNote.shiftIndent(document.text, line, delta),
-                        immediate = true,
-                    )
-                },
-                onMoveLine = { line, delta ->
-                    model.updateWholeNote(
-                        DailyNote.moveLine(document.text, line, delta),
-                        immediate = true,
-                    )
-                },
-                onSetLine = { line, value ->
-                    model.updateWholeNote(
-                        DailyNote.replaceLine(document.text, line, value),
-                        immediate = true,
-                    )
-                },
-                readOnly = state.isHistorical,
-                onAtTopChanged = onAtTopChanged,
-            )
-        }
-    }
+    NoteBody(
+        text = document.text,
+        mode = state.classicMode,
+        state = state,
+        onChange = model::updateWholeNote,
+        onAtTopChanged = onAtTopChanged,
+    )
 }
 
+/** Renders any chunk of markdown -- one tab's section body or the whole
+ *  note -- as either the raw editor or the interactive reader. [onChange]
+ *  receives the full new [text]; reader interactions (checkbox, indent,
+ *  reorder, progress +/-) save immediately, editor typing is debounced. */
 @Composable
-private fun ClassicStatusRow(
-    state: EditorUiState,
+private fun NoteBody(
+    text: String,
     mode: SectionMode,
-    model: DailyObsiViewModel,
+    state: EditorUiState,
+    onChange: (text: String, immediate: Boolean) -> Unit,
+    onAtTopChanged: (Boolean) -> Unit,
 ) {
-    if (state.isHistorical) return
-    Row(
-        Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 4.dp),
-        verticalAlignment = Alignment.CenterVertically,
-        horizontalArrangement = Arrangement.End,
-    ) {
-        SaveStatusLabel(state.saveStatus, model::retrySave)
-        if (mode == SectionMode.WRITE) {
-            TextButton(
-                onClick = model::saveNow,
-                enabled = state.saveStatus !is SaveStatus.Saving,
-            ) { Text("Save") }
-        }
-    }
-}
-
-@Composable
-private fun SaveStatusLabel(status: SaveStatus, onRetry: () -> Unit) {
-    when (status) {
-        SaveStatus.Clean -> Unit
-        SaveStatus.Unsaved -> Text("Unsaved", style = MaterialTheme.typography.labelMedium)
-        SaveStatus.Saving -> Text("Saving…", style = MaterialTheme.typography.labelMedium)
-        SaveStatus.Saved -> Text("Saved", style = MaterialTheme.typography.labelMedium)
-        is SaveStatus.Error -> TextButton(onClick = onRetry) { Text("Save failed · Retry") }
+    val writing = effectiveSectionMode(state.isHistorical, mode) == SectionMode.WRITE &&
+        !state.isHistorical
+    if (writing) {
+        MarkdownTextField(
+            value = text,
+            onValueChange = { onChange(it, false) },
+            modifier = Modifier.fillMaxSize()
+                .imePadding()
+                .padding(horizontal = 12.dp, vertical = 8.dp),
+            textStyle = MaterialTheme.typography.bodyLarge.copy(
+                fontSize = 15.sp,
+                fontFamily = FontFamily.Monospace,
+                color = MaterialTheme.colorScheme.onSurface,
+            ),
+            cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),
+            onShiftIndent = { line, delta -> onChange(DailyNote.shiftIndent(text, line, delta), false) },
+            onMoveLine = { line, delta -> onChange(DailyNote.moveLine(text, line, delta), false) },
+            onAtTopChanged = onAtTopChanged,
+        )
+    } else {
+        val treeUri = state.dailyUri ?: return
+        MarkdownView(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
+            text = text,
+            dailyUri = treeUri,
+            viewingDate = state.viewingDate,
+            onToggleCheckbox = { line -> onChange(DailyNote.toggleCheckbox(text, line), true) },
+            onShiftIndent = { line, delta -> onChange(DailyNote.shiftIndent(text, line, delta), true) },
+            onMoveLine = { line, delta -> onChange(DailyNote.moveLine(text, line, delta), true) },
+            onSetLine = { line, value -> onChange(DailyNote.replaceLine(text, line, value), true) },
+            readOnly = state.isHistorical,
+            onAtTopChanged = onAtTopChanged,
+        )
     }
 }
 

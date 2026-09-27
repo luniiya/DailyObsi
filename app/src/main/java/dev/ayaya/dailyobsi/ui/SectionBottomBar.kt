@@ -40,6 +40,7 @@ import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.coerceAtLeast
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import dev.ayaya.dailyobsi.model.NoteSection
 import dev.ayaya.dailyobsi.model.SectionIcon
@@ -57,15 +58,11 @@ fun SectionBottomBar(
         // Tabs share the bar's full width evenly; once they'd get narrower than
         // MIN_TAB_WIDTH, they stop shrinking and the row scrolls instead.
         BoxWithConstraints(Modifier.navigationBarsPadding()) {
-        val sidePadding = 6.dp
-        val spacing = 2.dp
-        val count = sections.size.coerceAtLeast(1)
-        val available = maxWidth - sidePadding * 2 - spacing * (count - 1)
-        val tabWidth = (available / count).coerceAtLeast(MIN_TAB_WIDTH)
+        val tabWidth = bottomBarTabWidth(maxWidth, sections.size)
         LazyRow(
             modifier = Modifier.height(72.dp),
-            contentPadding = PaddingValues(horizontal = sidePadding, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(spacing),
+            contentPadding = PaddingValues(horizontal = TAB_SIDE_PADDING, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(TAB_SPACING),
         ) {
             items(
                 items = sections,
@@ -108,6 +105,16 @@ fun SectionBottomBar(
 }
 
 private val MIN_TAB_WIDTH = 72.dp
+private val TAB_SIDE_PADDING = 6.dp
+private val TAB_SPACING = 2.dp
+
+/** Tabs split [barWidth] evenly, but never narrower than [MIN_TAB_WIDTH]
+ *  (past that the row scrolls instead). */
+internal fun bottomBarTabWidth(barWidth: Dp, tabCount: Int): Dp {
+    val count = tabCount.coerceAtLeast(1)
+    val available = barWidth - TAB_SIDE_PADDING * 2 - TAB_SPACING * (count - 1)
+    return (available / count).coerceAtLeast(MIN_TAB_WIDTH)
+}
 
 private fun iconFor(icon: SectionIcon): ImageVector = when (icon) {
     SectionIcon.TIME_UNTIL -> Icons.Filled.HourglassEmpty

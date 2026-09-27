@@ -33,6 +33,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Checkbox
+import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LocalMinimumInteractiveComponentSize
@@ -237,7 +238,7 @@ fun highlightMarkdownForEdit(raw: String, linkColor: Color): AnnotatedString = b
                 appendEditableInline(checkboxMatch.groupValues[4], linkColor)
             }
             TAGS_LINE.matches(line.trim()) -> withStyle(SpanStyle(color = linkColor)) { append(line) }
-            HR.matches(line) -> withStyle(SpanStyle(color = MUTED, letterSpacing = 2.sp)) { append(line) }
+            HR.matches(line) -> withStyle(SpanStyle(color = MUTED)) { append(line) }
             headerMatch != null -> {
                 val level = headerMatch.groupValues[1].length
                 val size = when (level) {
@@ -279,14 +280,36 @@ private val listContinuationInputTransformation = InputTransformation {
     val lineStart = full.lastIndexOf('\n', insertPos - 1) + 1
     val currentLine = full.substring(lineStart, insertPos)
 
+    when (val enter = listEnterFor(currentLine)) {
+        ListEnter.Exit -> {
+            delete(lineStart, insertPos)
+            placeCursorAfterCharAt(lineStart)
+        }
+        is ListEnter.Continue -> {
+            insert(insertPos + 1, enter.marker)
+            placeCursorAfterCharAt(insertPos + enter.marker.length)
+        }
+        null -> Unit
+    }
+}
+
+/** What Enter at the end of [currentLine] should do to a list. */
+internal sealed interface ListEnter {
+    /** Start the new line with [marker] ("2. ", "- [ ] ", ...). */
+    data class Continue(val marker: String) : ListEnter
+    /** The item was empty: strip its marker instead (leaves the list). */
+    data object Exit : ListEnter
+}
+
+/** null when [currentLine] isn't an ordered or checkbox list item. */
+internal fun listEnterFor(currentLine: String): ListEnter? {
     val orderedMatch = ORDERED_LIST_PREFIX.find(currentLine)
     val checkboxMatch = if (orderedMatch == null) CHECKBOX_LINE.matchEntire(currentLine) else null
-
     val marker: String
     val contentAfterMarker: String
     when {
         orderedMatch != null -> {
-            val num = orderedMatch.groupValues[2].toIntOrNull() ?: return@InputTransformation
+            val num = orderedMatch.groupValues[2].toIntOrNull() ?: return null
             marker = "${orderedMatch.groupValues[1]}${num + 1}. "
             contentAfterMarker = currentLine.substring(orderedMatch.range.last + 1)
         }
@@ -294,16 +317,9 @@ private val listContinuationInputTransformation = InputTransformation {
             marker = "${checkboxMatch.groupValues[1]} ${checkboxMatch.groupValues[3]}"
             contentAfterMarker = checkboxMatch.groupValues[4]
         }
-        else -> return@InputTransformation
+        else -> return null
     }
-
-    if (contentAfterMarker.isBlank()) {
-        delete(lineStart, insertPos)
-        placeCursorAfterCharAt(lineStart)
-    } else {
-        insert(insertPos + 1, marker)
-        placeCursorAfterCharAt(insertPos + marker.length)
-    }
+    return if (contentAfterMarker.isBlank()) ListEnter.Exit else ListEnter.Continue(marker)
 }
 
 /** One checkbox line's position, for [MarkdownTextField]'s overlay: [hideStart]/[hideEnd]
@@ -311,7 +327,7 @@ private val listContinuationInputTransformation = InputTransformation {
  *  see [markdownOutputTransformation]), [anchorOffset] is where that span starts
  *  *after* leading indentation, i.e. where the overlaid Checkbox actually gets
  *  placed (matching reading mode's checkbox position after the indent padding). */
-private data class CheckboxOverlaySpec(
+internal data class CheckboxOverlaySpec(
     val lineIndex: Int,
     val hideStart: Int,
     val hideEnd: Int,
@@ -319,7 +335,7 @@ private data class CheckboxOverlaySpec(
     val checked: Boolean,
 )
 
-private fun checkboxOverlaySpecs(text: String): List<CheckboxOverlaySpec> {
+internal fun checkboxOverlaySpecs(text: String): List<CheckboxOverlaySpec> {
     val specs = mutableListOf<CheckboxOverlaySpec>()
     var pos = 0
     text.split("\n").forEachIndexed { idx, line ->
@@ -340,6 +356,17 @@ private fun checkboxOverlaySpecs(text: String): List<CheckboxOverlaySpec> {
     return specs
 }
 
+/** Raw-text [start, end) span of every `---`-style horizontal-rule line. */
+internal fun horizontalRuleRanges(text: String): List<IntRange> {
+    val ranges = mutableListOf<IntRange>()
+    var pos = 0
+    for (line in text.split("\n")) {
+        if (HR.matches(line)) ranges.add(pos until pos + line.length)
+        pos += line.length + 1
+    }
+    return ranges
+}
+
 /** What's actually displayed for the raw text: replays [highlightMarkdownForEdit]'s
  *  span styles (still valid 1:1 since it never changes length), then hides every
  *  checkbox line's "- [ ]"/"- [x]" syntax (transparent, not deleted, so it still
@@ -355,6 +382,10 @@ private fun markdownOutputTransformation(linkColor: Color) = OutputTransformatio
     for (spec in checkboxOverlaySpecs(raw)) {
         addStyle(SpanStyle(color = Color.Transparent), spec.hideStart, spec.hideEnd)
     }
+    // Horizontal rules get a real divider overlaid by MarkdownTextField instead.
+    for (range in horizontalRuleRanges(raw)) {
+        addStyle(SpanStyle(color = Color.Transparent), range.first, range.last + 1)
+    }
 }
 
 /** Describes, for [resolveCursorFollow], what actually happened to the line
@@ -362,7 +393,7 @@ private fun markdownOutputTransformation(linkColor: Color) = OutputTransformatio
  *  of just preserving a raw character offset (which stays at the same
  *  *screen* position even when the content there changed out from under
  *  it -- see [MarkdownTextField]'s bubble bug). */
-private sealed class PendingCursorFollow {
+internal sealed class PendingCursorFollow {
     /** The cursor's own line *content* relocated from [fromLine] to [toLine]
      *  unchanged (moveLine) -- offset within the line carries over as-is. */
     data class MovedLine(val fromLine: Int, val toLine: Int) : PendingCursorFollow()
@@ -377,7 +408,7 @@ private sealed class PendingCursorFollow {
  *  [PendingCursorFollow]) or just clamping the raw offset otherwise (the
  *  right behavior for changes with no relevant line semantics, e.g.
  *  switching notes/sections). */
-private fun resolveCursorFollow(oldText: String, oldOffset: Int, newText: String, pending: PendingCursorFollow?): Int {
+internal fun resolveCursorFollow(oldText: String, oldOffset: Int, newText: String, pending: PendingCursorFollow?): Int {
     if (pending == null) return oldOffset.coerceIn(0, newText.length)
 
     val oldLines = oldText.split("\n")
@@ -539,20 +570,33 @@ fun MarkdownTextField(
         }
 
         val lr = layoutResult
-        val textLen = lr?.layoutInput?.text?.length ?: 0
+        val layoutText = lr?.layoutInput?.text?.text.orEmpty()
+        val textLen = layoutText.length
+        // Specs come from the text the layout was actually built from, not
+        // state.text: layout lags typing by a frame, and pairing new offsets
+        // with the old layout made every checkbox below the cursor jump
+        // sideways for a frame on each keystroke (the "flicker").
+        val specs = remember(layoutText) { checkboxOverlaySpecs(layoutText) }
+        val hrRanges = remember(layoutText) { horizontalRuleRanges(layoutText) }
         if (lr != null && textLen > 0) {
-            for (spec in checkboxOverlaySpecs(state.text.toString())) {
+            for (spec in specs) {
                 val anchor = spec.anchorOffset.coerceIn(0, textLen - 1)
-                val box = lr.getBoundingBox(anchor)
-                val centerY = (box.top.roundToInt() + box.bottom.roundToInt()) / 2
+                val line = lr.getLineForOffset(anchor)
+                val lineTop = lr.getLineTop(line).roundToInt()
+                val lineBottom = lr.getLineBottom(line).roundToInt()
+                val left = lr.getBoundingBox(anchor).left.roundToInt()
+                // Hit area = exactly the hidden "- [ ]" span on this line, full
+                // line height: big enough to hit easily, but never reaching into
+                // the todo text itself (tapping there should place the cursor).
+                val right = lr.getBoundingBox((spec.hideEnd - 1).coerceIn(anchor, textLen - 1))
+                    .right.roundToInt().coerceAtLeast(left + checkboxSizePx)
+                val widthDp = with(density) { (right - left).toDp() }
+                val heightDp = with(density) { (lineBottom - lineTop).toDp() }
 
                 Box(
                     modifier = Modifier.offset {
-                        IntOffset(
-                            box.left.roundToInt(),
-                            centerY - checkboxSizePx / 2 - scrollState.value,
-                        )
-                    }.size(32.dp).clickable {
+                        IntOffset(left, lineTop - scrollState.value)
+                    }.size(widthDp, heightDp).clickable {
                         latestOnValueChange(
                             DailyNote.toggleCheckbox(
                                 state.text.toString(),
@@ -560,6 +604,7 @@ fun MarkdownTextField(
                             ),
                         )
                     },
+                    contentAlignment = Alignment.CenterStart,
                 ) {
                     CompositionLocalProvider(LocalMinimumInteractiveComponentSize provides 0.dp) {
                         Checkbox(
@@ -569,6 +614,14 @@ fun MarkdownTextField(
                         )
                     }
                 }
+            }
+            for (range in hrRanges) {
+                val line = lr.getLineForOffset(range.first.coerceIn(0, textLen - 1))
+                val centerY = ((lr.getLineTop(line) + lr.getLineBottom(line)) / 2).roundToInt()
+                HorizontalDivider(
+                    modifier = Modifier.offset { IntOffset(0, centerY - scrollState.value) }
+                        .fillMaxWidth(),
+                )
             }
         }
 

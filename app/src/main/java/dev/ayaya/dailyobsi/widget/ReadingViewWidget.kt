@@ -1,11 +1,6 @@
 package dev.ayaya.dailyobsi.widget
 
 import android.content.Context
-import android.os.Build
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.unit.dp
@@ -37,6 +32,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import android.net.Uri
+import dev.ayaya.dailyobsi.ui.appColorScheme
 import dev.ayaya.dailyobsi.Block
 import dev.ayaya.dailyobsi.VaultPrefs
 import dev.ayaya.dailyobsi.parseBlocks
@@ -66,8 +62,8 @@ class ReadingViewWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         android.util.Log.d("DailyObsiWidget", "ReadingViewWidget.provideGlance: CALLED id=$id")
-        val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
-        val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
+        val light = appColorScheme(context, dark = false)
+        val dark = appColorScheme(context, dark = true)
 
         val initialVersion = widgetDataVersion.get()
         val initial = loadReadingView(context)

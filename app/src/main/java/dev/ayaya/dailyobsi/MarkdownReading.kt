@@ -69,7 +69,6 @@ import coil.request.ImageRequest
 import dev.ayaya.dailyobsi.storage.AttachmentResolver
 import dev.ayaya.dailyobsi.storage.AttachmentState
 import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import kotlin.math.abs
 
 /**
@@ -602,43 +601,19 @@ private fun CodeBlock(body: List<String>) {
  *  through [onSetLine] (same path the checkbox toggle uses). */
 @Composable
 private fun ProgressBarBlock(block: Block.Code, onSetLine: ((Int, String) -> Unit)?) {
-    val body = block.body
-    val fields = body.mapNotNull { line ->
-        val idx = line.indexOf(':')
-        if (idx == -1) null else line.substring(0, idx).trim() to line.substring(idx + 1).trim()
-    }.toMap()
-
-    val name = fields["name"] ?: fields["id"] ?: "progress"
-    val kind = fields["kind"] ?: "manual"
-    val value = fields["value"]?.toIntOrNull()
-    val max = fields["max"]?.toIntOrNull()
-    val interactive = onSetLine != null && kind == "manual" && fields["button"] == "true" &&
-        value != null && max != null
-
-    val fraction: Float? = when (kind) {
-        "manual" -> if (value != null && max != null && max > 0) (value.toFloat() / max).coerceIn(0f, 1f) else null
-        "day-year" -> {
-            val today = LocalDate.now()
-            val len = if (today.isLeapYear) 366f else 365f
-            (today.dayOfYear / len).coerceIn(0f, 1f)
-        }
-        "day-custom" -> runCatching {
-            val min = LocalDate.parse(fields["min"])
-            val maxDate = LocalDate.parse(fields["max"])
-            val total = ChronoUnit.DAYS.between(min, maxDate)
-            if (total == 0L) null
-            else (ChronoUnit.DAYS.between(min, LocalDate.now()).toFloat() / total.toFloat()).coerceIn(0f, 1f)
-        }.getOrNull()
-        else -> null
-    }
+    val spec = parseProgressBar(block)
+    val name = spec.name
+    val kind = spec.kind
+    val value = spec.value
+    val max = spec.max
+    val interactive = onSetLine != null && spec.interactive
+    val fraction = spec.fraction()
 
     fun applyDelta(delta: Int) {
-        if (value == null || max == null) return
-        val newValue = (value + delta).coerceIn(0, max)
-        val bodyLineIdx = body.indexOfFirst { it.trim().startsWith("value:") }
-        if (bodyLineIdx == -1) return
-        val leading = leadingWhitespaceOf(body[bodyLineIdx])
-        onSetLine?.invoke(block.firstBodyLine + bodyLineIdx, "${leading}value: $newValue")
+        val lineIndex = spec.valueLineIndex ?: return
+        val line = block.body[lineIndex - block.firstBodyLine]
+        val newLine = progressValueLine(line, delta, max ?: return) ?: return
+        onSetLine?.invoke(lineIndex, newLine)
     }
 
     Column(modifier = Modifier.fillMaxWidth().padding(vertical = 6.dp)) {

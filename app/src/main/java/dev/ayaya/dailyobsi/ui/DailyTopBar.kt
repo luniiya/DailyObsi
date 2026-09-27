@@ -70,6 +70,7 @@ fun DailyTopBar(
                     TextButton(onClick = model::closeSettings) { Text("Done") }
                 }
             } else {
+                if (!state.isHistorical) SaveStatusLabel(state.saveStatus, model::retrySave)
                 IconButton(
                     onClick = model::openCalendar,
                     enabled = state.indexedNotes.isNotEmpty(),

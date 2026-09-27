@@ -136,6 +136,10 @@ Configured AVDs: `grid9test`, `recoral_test` (both android-35 google_apis x86_64
 
 ## Testing
 
+**Unit tests: `./test.sh`** (or `./test.sh ProgressBar` to filter by class name) — plain JVM tests under `app/src/test/java/dev/ayaya/dailyobsi/`, mirroring the main source folders, no emulator needed. Run it before every install. Feature logic is deliberately kept in pure functions so it's testable there, not buried in composables: note rewrites (`DailyNote.toggleCheckbox`/`shiftIndent`/`moveLine`/`replaceLines`), `parseBlocks`/`headerBodyLineRange`, `ProgressBar.kt` (`parseProgressBar`/`progressValueLine`, shared by the app reader *and* the widgets), edit mode's `listEnterFor`/`checkboxOverlaySpecs`/`horizontalRuleRanges`/`resolveCursorFollow` (`internal` for tests), `restoredSection` (which tab reopens), `bottomBarTabWidth`, and the widget's `parseInlineSegmentsForGlance`. When adding a feature, put its logic in a function like these and add a test.
+
+**On-device testing is the user's job, not Claude's.** After a change: build, install, `./logs.sh crash`, then stop — never drive the emulator with `adb shell input`, since the user tests on it at the same time.
+
 Installed and running on the `grid9test` AVD: a full copy of `~/obsidian/main` was `adb push`ed to `/sdcard/obsidian` on the emulator (not a symlink/sync -- a one-time snapshot copy, so it goes stale; re-push if the on-device vault needs to reflect later edits made on the dev machine), and `dev.ayaya.dailyobsi` is installed via `adb install -r`. When picking a folder in the app on this AVD, point it at `obsidian/main` under Internal storage.
 
 **Check logcat after every install/launch, not just when something visibly breaks.** `adb logcat -c` right before `./run.sh` (or right after), then `adb logcat -d | grep -iE "dailyobsi.*(fatal|exception|error)"` once the app's up — a clean run should show nothing. Silent logic bugs (bad state, wrong output) won't throw, so this only catches crashes/exceptions, but it's a cheap check worth doing every time regardless, not just when chasing a specific crash.

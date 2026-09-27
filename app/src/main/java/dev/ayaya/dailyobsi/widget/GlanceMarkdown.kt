@@ -38,6 +38,8 @@ import androidx.glance.unit.ColorProvider
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.unit.dp
 import dev.ayaya.dailyobsi.R
+import dev.ayaya.dailyobsi.parseProgressBar
+import dev.ayaya.dailyobsi.progressValueLine
 import dev.ayaya.dailyobsi.BLOCKQUOTE
 import dev.ayaya.dailyobsi.Block
 import dev.ayaya.dailyobsi.CHECKBOX_LINE
@@ -57,8 +59,6 @@ import dev.ayaya.dailyobsi.headerColorFor
 import dev.ayaya.dailyobsi.highlightColorFor
 import dev.ayaya.dailyobsi.indentLevel
 import dev.ayaya.dailyobsi.leadingWhitespaceOf
-import java.time.LocalDate
-import java.time.temporal.ChronoUnit
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -471,35 +471,14 @@ private fun GlanceCodeBlock(body: List<String>) {
 
 @Composable
 private fun GlanceProgressBar(block: Block.Code) {
-    val body = block.body
-    val fields = body.mapNotNull { line ->
-        val idx = line.indexOf(':')
-        if (idx == -1) null else line.substring(0, idx).trim() to line.substring(idx + 1).trim()
-    }.toMap()
-
-    val name = fields["name"] ?: fields["id"] ?: "progress"
-    val kind = fields["kind"] ?: "manual"
-    val value = fields["value"]?.toIntOrNull()
-    val max = fields["max"]?.toIntOrNull()
-    val valueLineIdx = body.indexOfFirst { it.trim().startsWith("value:") }
-        .takeIf { it != -1 }?.let { block.firstBodyLine + it }
-    val interactive = kind == "manual" && fields["button"] == "true" && value != null && max != null && valueLineIdx != null
-
-    val fraction: Float? = when (kind) {
-        "manual" -> if (value != null && max != null && max > 0) (value.toFloat() / max).coerceIn(0f, 1f) else null
-        "day-year" -> {
-            val today = LocalDate.now()
-            val len = if (today.isLeapYear) 366f else 365f
-            (today.dayOfYear / len).coerceIn(0f, 1f)
-        }
-        "day-custom" -> runCatching {
-            val min = LocalDate.parse(fields["min"])
-            val maxDate = LocalDate.parse(fields["max"])
-            val total = ChronoUnit.DAYS.between(min, maxDate)
-            if (total == 0L) null else (ChronoUnit.DAYS.between(min, LocalDate.now()).toFloat() / total.toFloat()).coerceIn(0f, 1f)
-        }.getOrNull()
-        else -> null
-    }
+    val spec = parseProgressBar(block)
+    val name = spec.name
+    val kind = spec.kind
+    val value = spec.value
+    val max = spec.max
+    val valueLineIdx = spec.valueLineIndex
+    val interactive = spec.interactive
+    val fraction = spec.fraction()
 
     Column(modifier = GlanceModifier.fillMaxWidth().padding(vertical = 5.dp)) {
         Row(verticalAlignment = Alignment.Vertical.CenterVertically, modifier = GlanceModifier.fillMaxWidth()) {
@@ -680,14 +659,11 @@ class GlanceProgressDeltaAction : ActionCallback {
                 android.util.Log.w(tag, "GlanceProgressDeltaAction: lineIndex $lineIndex out of range (file has ${text.lines().size} lines), bailing")
                 return@withLock
             }
-            val value = line.substringAfter("value:", "").trim().toIntOrNull()
-            if (value == null) {
+            val newLine = progressValueLine(line, delta, max)
+            if (newLine == null) {
                 android.util.Log.w(tag, "Glance progress value was invalid at line=$lineIndex")
                 return@withLock
             }
-            val newValue = (value + delta).coerceIn(0, max)
-            val leading = leadingWhitespaceOf(line)
-            val newLine = "${leading}value: $newValue"
             android.util.Log.d(tag, "Glance progress changed at line=$lineIndex")
             DailyNote.writeText(context, note.uri, DailyNote.replaceLine(text, lineIndex, newLine))
         } }

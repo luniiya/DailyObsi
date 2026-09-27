@@ -2,13 +2,11 @@ package dev.ayaya.dailyobsi.widget
 
 import android.appwidget.AppWidgetManager
 import android.content.Intent
-import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -29,10 +27,6 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,6 +47,7 @@ import androidx.glance.state.PreferencesGlanceStateDefinition
 import dev.ayaya.dailyobsi.DailyNote
 import dev.ayaya.dailyobsi.HEADER
 import dev.ayaya.dailyobsi.VaultPrefs
+import dev.ayaya.dailyobsi.ui.DailyObsiTheme
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -104,13 +99,6 @@ class HeadingPickerActivity : ComponentActivity() {
 
         setContent {
             val context = LocalContext.current
-            val dark = isSystemInDarkTheme()
-            val colorScheme = when {
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S && dark -> dynamicDarkColorScheme(context)
-                Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> dynamicLightColorScheme(context)
-                dark -> darkColorScheme()
-                else -> lightColorScheme()
-            }
             val scope = rememberCoroutineScope()
             var headings by remember { mutableStateOf<List<String>?>(null) }
             var pickedHeading by remember { mutableStateOf<String?>(null) }
@@ -175,7 +163,7 @@ class HeadingPickerActivity : ComponentActivity() {
                 }
             }
 
-            MaterialTheme(colorScheme = colorScheme) {
+            DailyObsiTheme {
                 Surface(Modifier.fillMaxSize()) {
                     val heading = pickedHeading
                     if (heading == null) {

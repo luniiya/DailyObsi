@@ -1,11 +1,8 @@
 package dev.ayaya.dailyobsi.widget
 
 import android.content.Context
-import android.os.Build
 import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.glance.GlanceId
@@ -33,6 +30,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextAlign
 import androidx.glance.text.TextStyle
+import dev.ayaya.dailyobsi.ui.appColorScheme
 import dev.ayaya.dailyobsi.MainActivity
 
 // actionStartActivity's `parameters` become intent extras on the launched
@@ -72,8 +70,8 @@ class EditShortcutWidget : GlanceAppWidget() {
         // from the two resolved ColorSchemes, matching MainActivity's own
         // dynamicLightColorScheme/dynamicDarkColorScheme + API<31 fallback,
         // just via the RemoteViews-compatible path.
-        val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
-        val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
+        val light = appColorScheme(context, dark = false)
+        val dark = appColorScheme(context, dark = true)
 
         provideContent {
             // Reading the heading here (currentState<Preferences>(), inside

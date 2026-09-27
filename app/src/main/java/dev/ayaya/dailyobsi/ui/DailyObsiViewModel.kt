@@ -15,6 +15,7 @@ import dev.ayaya.dailyobsi.model.SectionMode
 import dev.ayaya.dailyobsi.model.normalizeHeading
 import dev.ayaya.dailyobsi.model.parseH2Sections
 import dev.ayaya.dailyobsi.model.replaceSectionBody
+import dev.ayaya.dailyobsi.model.restoredSection
 import dev.ayaya.dailyobsi.storage.AppPreferences
 import dev.ayaya.dailyobsi.storage.NoteRepository
 import dev.ayaya.dailyobsi.storage.SaveCoordinator
@@ -269,13 +270,11 @@ class DailyObsiViewModel(
             section.id to (previous.sectionModes[section.id].takeIf { sameNote }
                 ?: preferences.sectionMode(section.title))
         }.toMutableMap()
-        // Reloading the note already on screen keeps its tab; otherwise fall
-        // back to the tab remembered for that date (today only), then the first.
-        val remembered = if (sameNote) previous.selectedSectionId
-        else if (date == LocalDate.now()) preferences.lastSection(date)
-        else null
-        var selected = remembered?.takeIf { id -> sections.any { it.id == id } }
-            ?: sections.firstOrNull()?.id
+        var selected = restoredSection(
+            sections,
+            current = previous.selectedSectionId.takeIf { sameNote },
+            remembered = if (date == LocalDate.now()) preferences.lastSection(date) else null,
+        )
         var classicMode = if (sameNote) previous.classicMode else SectionMode.READ
         if (!startDestinationApplied && date == LocalDate.now()) {
             val requested = openSectionHeading

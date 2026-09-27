@@ -1,11 +1,6 @@
 package dev.ayaya.dailyobsi.widget
 
 import android.content.Context
-import android.os.Build
-import androidx.compose.material3.darkColorScheme
-import androidx.compose.material3.dynamicDarkColorScheme
-import androidx.compose.material3.dynamicLightColorScheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.produceState
 import androidx.compose.ui.unit.dp
@@ -33,6 +28,7 @@ import androidx.glance.text.FontWeight
 import androidx.glance.text.Text
 import androidx.glance.text.TextStyle
 import android.net.Uri
+import dev.ayaya.dailyobsi.ui.appColorScheme
 import dev.ayaya.dailyobsi.Block
 import androidx.glance.appwidget.state.getAppWidgetState
 import kotlinx.coroutines.Dispatchers
@@ -61,8 +57,8 @@ class HeadingWidget : GlanceAppWidget() {
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
         android.util.Log.d("DailyObsiWidget", "HeadingWidget.provideGlance: CALLED id=$id")
-        val light = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicLightColorScheme(context) else lightColorScheme()
-        val dark = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) dynamicDarkColorScheme(context) else darkColorScheme()
+        val light = appColorScheme(context, dark = false)
+        val dark = appColorScheme(context, dark = true)
 
         val initialPrefs = getAppWidgetState(context, PreferencesGlanceStateDefinition, id)
         val initialHeading = initialPrefs[SELECTED_HEADING_KEY]
