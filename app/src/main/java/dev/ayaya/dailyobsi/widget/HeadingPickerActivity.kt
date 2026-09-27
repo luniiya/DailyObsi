@@ -48,6 +48,7 @@ import dev.ayaya.dailyobsi.DailyNote
 import dev.ayaya.dailyobsi.HEADER
 import dev.ayaya.dailyobsi.VaultPrefs
 import dev.ayaya.dailyobsi.ui.DailyObsiTheme
+import dev.ayaya.dailyobsi.ui.applyComposeWorkarounds
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -84,6 +85,7 @@ private val EMOJI_SUGGESTIONS = listOf("✏️", "📝", "✅", "📋", "🎯", 
 class HeadingPickerActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyComposeWorkarounds()
         // Default result if the user backs out without picking anything --
         // the system won't add the widget at all in that case.
         setResult(RESULT_CANCELED)
@@ -112,7 +114,6 @@ class HeadingPickerActivity : ComponentActivity() {
             }
 
             fun finishConfiguring(heading: String, emoji: String) {
-                android.util.Log.d("DailyObsiWidget", "finishConfiguring: TAPPED appWidgetId=$appWidgetId heading=\"$heading\" emoji=\"$emoji\"")
                 scope.launch {
                     try {
                         val glanceId = withContext(Dispatchers.IO) {
@@ -125,7 +126,6 @@ class HeadingPickerActivity : ComponentActivity() {
                             }
                             glanceId
                         }
-                        android.util.Log.d("DailyObsiWidget", "finishConfiguring: saved, glanceId=$glanceId")
                         // The save itself always lands fine -- confirmed via a
                         // real logcat round-trip during debugging. What used to
                         // not land was a *refresh*, for two separate reasons
@@ -145,12 +145,10 @@ class HeadingPickerActivity : ComponentActivity() {
                         // stateDefinition and reads it inside provideContent.
                         val providerClassName = AppWidgetManager.getInstance(context)
                             .getAppWidgetInfo(appWidgetId)?.provider?.className
-                        android.util.Log.d("DailyObsiWidget", "finishConfiguring: providerClassName=$providerClassName")
                         when (providerClassName) {
                             EditShortcutWidgetReceiver::class.java.name -> EditShortcutWidget().update(context, glanceId)
                             HeadingWidgetReceiver::class.java.name -> HeadingWidget().update(context, glanceId)
                         }
-                        android.util.Log.d("DailyObsiWidget", "finishConfiguring: direct update() call returned, refreshing rest + finishing")
                         // Also sweep everything else normally (other already-
                         // placed instances of any widget class that might be
                         // showing stale data for an unrelated reason).

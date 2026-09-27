@@ -24,7 +24,6 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material3.Checkbox
@@ -257,7 +256,6 @@ fun MarkdownView(
     onShiftIndent: (lineIndex: Int, delta: Int) -> Unit,
     onMoveLine: (lineIndex: Int, delta: Int) -> Unit,
     onSetLine: (lineIndex: Int, newLine: String) -> Unit,
-    onEditSection: ((headerLineIndex: Int) -> Unit)? = null,
     readOnly: Boolean = false,
     onAtTopChanged: (Boolean) -> Unit = {},
 ) {
@@ -337,7 +335,6 @@ fun MarkdownView(
                     onShiftIndent = onShiftIndent,
                     onMoveLine = onMoveLine,
                     onToggleHeaderCollapse = { idx -> collapsedHeaders[idx] = !(collapsedHeaders[idx] ?: false) },
-                    onEditSection = onEditSection,
                     readOnly = readOnly,
                     attachments = attachments,
                 )
@@ -356,7 +353,6 @@ private fun MarkdownLine(
     onShiftIndent: (Int, Int) -> Unit,
     onMoveLine: (Int, Int) -> Unit,
     onToggleHeaderCollapse: (Int) -> Unit,
-    onEditSection: ((Int) -> Unit)?,
     readOnly: Boolean,
     attachments: Map<String, AttachmentState>,
 ) {
@@ -486,21 +482,6 @@ private fun MarkdownLine(
                     color = headerColorFor(level),
                     modifier = Modifier.weight(1f)
                 )
-                // Opens a dedicated page to edit just this section's body
-                // (see SectionEditorScreen) -- nested inside the row's own
-                // fold-toggle clickable, so tapping the pencil consumes the
-                // touch there and doesn't also fold/unfold the section.
-                if (!readOnly && onEditSection != null) {
-                    Icon(
-                        Icons.Filled.Edit,
-                        contentDescription = "Edit section",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier
-                            .clickable { onEditSection(lineIndex) }
-                            .padding(start = 8.dp)
-                            .size(18.dp),
-                    )
-                }
             }
         }
 

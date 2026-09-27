@@ -56,7 +56,6 @@ class HeadingWidget : GlanceAppWidget() {
     override val stateDefinition = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        android.util.Log.d("DailyObsiWidget", "HeadingWidget.provideGlance: CALLED id=$id")
         val light = appColorScheme(context, dark = false)
         val dark = appColorScheme(context, dark = true)
 

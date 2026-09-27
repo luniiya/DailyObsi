@@ -40,6 +40,24 @@ class MarkdownEditingTest {
     }
 
     @Test
+    fun `checkbox overlay keys follow line content, not position or mark`() {
+        val before = "- [ ] a\n- [x] b"
+        val after = "- [ ] a\n- [ ] \n- [x] b" // Enter inserted a new item
+        val keysBefore = checkboxOverlayKeys(before, checkboxOverlaySpecs(before))
+        val keysAfter = checkboxOverlayKeys(after, checkboxOverlaySpecs(after))
+        assertEquals(keysBefore[1], keysAfter[2]) // "b" keeps its identity after moving down
+        val toggled = "- [x] a\n- [x] b"
+        assertEquals(keysBefore, checkboxOverlayKeys(toggled, checkboxOverlaySpecs(toggled)))
+    }
+
+    @Test
+    fun `duplicate checkbox lines get distinct keys`() {
+        val text = "- [ ] same\n- [ ] same"
+        val keys = checkboxOverlayKeys(text, checkboxOverlaySpecs(text))
+        assertEquals(2, keys.toSet().size)
+    }
+
+    @Test
     fun `horizontal rule ranges cover whole rule lines only`() {
         assertEquals(listOf(2..4, 13..15), horizontalRuleRanges("a\n---\n- [ ] \n***"))
     }

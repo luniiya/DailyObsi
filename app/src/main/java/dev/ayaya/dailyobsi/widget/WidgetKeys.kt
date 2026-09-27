@@ -2,7 +2,6 @@ package dev.ayaya.dailyobsi.widget
 
 import android.content.Context
 import androidx.datastore.preferences.core.stringPreferencesKey
-import androidx.glance.appwidget.GlanceAppWidgetManager
 import androidx.glance.appwidget.updateAll
 import android.net.Uri
 import dev.ayaya.dailyobsi.DailyNote
@@ -48,27 +47,10 @@ val SELECTED_EMOJI_KEY = stringPreferencesKey("selected_emoji")
  * repeated taps.
  */
 suspend fun refreshAllWidgets(context: Context) {
-    val tag = "DailyObsiWidget"
-    // updateAll() = manager.getGlanceIds(javaClass).forEach { update(context, it) } --
-    // if getGlanceIds() resolves to an empty list (its own internal
-    // provider->receiver mapping datastore not knowing about this class
-    // yet), the forEach silently does nothing and updateAll() still
-    // "returns" with no error at all. Logging the enumeration result
-    // directly (not just "updateAll() returned") is the only way to tell
-    // those two cases apart from logcat.
-    val manager = GlanceAppWidgetManager(context)
     widgetDataVersion.incrementAndGet()
-    android.util.Log.d(tag, "refreshAllWidgets: starting")
-    val editIds = manager.getGlanceIds(EditShortcutWidget::class.java)
-    android.util.Log.d(tag, "refreshAllWidgets: EditShortcutWidget glanceIds=$editIds")
     EditShortcutWidget().updateAll(context)
-    val headingIds = manager.getGlanceIds(HeadingWidget::class.java)
-    android.util.Log.d(tag, "refreshAllWidgets: HeadingWidget glanceIds=$headingIds")
     HeadingWidget().updateAll(context)
-    val readingIds = manager.getGlanceIds(ReadingViewWidget::class.java)
-    android.util.Log.d(tag, "refreshAllWidgets: ReadingViewWidget glanceIds=$readingIds")
     ReadingViewWidget().updateAll(context)
-    android.util.Log.d(tag, "refreshAllWidgets: all done")
 }
 
 /**
@@ -145,14 +127,9 @@ private val refreshGeneration = AtomicLong(0)
  *  the caller's own execution context. */
 suspend fun requestWidgetRefresh(context: Context) {
     val myGeneration = refreshGeneration.incrementAndGet()
-    android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: requested gen=$myGeneration")
     delay(200)
-    if (refreshGeneration.get() == myGeneration) {
-        android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: gen=$myGeneration is latest, refreshing now")
-        refreshAllWidgets(context)
-    } else {
-        android.util.Log.d("DailyObsiWidget", "requestWidgetRefresh: gen=$myGeneration superseded by ${refreshGeneration.get()}, skipping")
-    }
+    // A newer request arrived during the wait: let that one do the refresh.
+    if (refreshGeneration.get() == myGeneration) refreshAllWidgets(context)
 }
 
 /**

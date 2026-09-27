@@ -14,12 +14,12 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.material3.Surface
-import androidx.compose.runtime.Composable
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.viewmodel.compose.viewModel
 import dev.ayaya.dailyobsi.ui.DailyObsiApp
 import dev.ayaya.dailyobsi.ui.DailyObsiTheme
 import dev.ayaya.dailyobsi.ui.DailyObsiViewModel
+import dev.ayaya.dailyobsi.ui.applyComposeWorkarounds
 
 class MainActivity : ComponentActivity() {
     companion object {
@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        applyComposeWorkarounds()
         enableEdgeToEdge(
             navigationBarStyle = SystemBarStyle.auto(Color.TRANSPARENT, Color.TRANSPARENT),
         )

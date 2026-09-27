@@ -2,7 +2,6 @@
 
 package dev.ayaya.dailyobsi
 
-import android.util.Log
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
@@ -43,6 +42,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
@@ -83,7 +83,6 @@ import kotlin.math.roundToInt
  * reading mode is for.
  */
 
-private const val LOG_TAG = "DailyObsiEdit"
 
 private fun AnnotatedString.Builder.appendEditableInline(raw: String, linkColor: Color) {
     var i = 0
@@ -356,6 +355,25 @@ internal fun checkboxOverlaySpecs(text: String): List<CheckboxOverlaySpec> {
     return specs
 }
 
+/** A stable identity per checkbox overlay: the line's indent + todo text
+ *  (not its position, not its check mark), numbered when duplicated. Keyed
+ *  this way, pressing Enter moves each overlay along with its own line
+ *  instead of every checkbox below briefly animating to its new neighbour's
+ *  checked state; ticking a box keeps its key, so that still animates. */
+internal fun checkboxOverlayKeys(text: String, specs: List<CheckboxOverlaySpec>): List<String> {
+    val lines = text.split("\n")
+    val seen = mutableMapOf<String, Int>()
+    return specs.map { spec ->
+        val line = lines.getOrElse(spec.lineIndex) { "" }
+        val base = CHECKBOX_LINE.matchEntire(line)
+            ?.let { leadingWhitespaceOf(line) + it.groupValues[4] }
+            ?: line
+        val n = seen.getOrDefault(base, 0)
+        seen[base] = n + 1
+        "$base#$n"
+    }
+}
+
 /** Raw-text [start, end) span of every `---`-style horizontal-rule line. */
 internal fun horizontalRuleRanges(text: String): List<IntRange> {
     val ranges = mutableListOf<IntRange>()
@@ -460,10 +478,8 @@ internal fun resolveCursorFollow(oldText: String, oldOffset: Int, newText: Strin
  *  on (see the bottom of this function for why it's one fixed bubble and not
  *  per-row controls). This composable has no idea what [value] represents in
  *  the wider app, so it always reports line indices local to [value] itself
- *  -- main edit mode passes callbacks operating on the full file (its
- *  `value` *is* the full file), the section editor passes callbacks
- *  operating on its own draft string instead (see `SectionEditorScreen`),
- *  not the file directly, since the file won't reflect the draft until Save. */
+ *  -- the caller maps them back (Classic layout's `value` is the whole file,
+ *  a tab's `value` is just that section's body; see NoteBody). */
 @Composable
 fun MarkdownTextField(
     value: String,
@@ -504,7 +520,6 @@ fun MarkdownTextField(
             val pending = pendingCursorFollow
             pendingCursorFollow = null
             val newOffset = resolveCursorFollow(oldText, oldOffset, value, pending)
-            Log.d(LOG_TAG, "resync: cursor $oldOffset -> $newOffset (pending=$pending, len ${oldText.length} -> ${value.length})")
             state.edit {
                 replace(0, length, value)
                 placeCursorBeforeCharAt(newOffset)
@@ -578,8 +593,9 @@ fun MarkdownTextField(
         // sideways for a frame on each keystroke (the "flicker").
         val specs = remember(layoutText) { checkboxOverlaySpecs(layoutText) }
         val hrRanges = remember(layoutText) { horizontalRuleRanges(layoutText) }
+        val specKeys = remember(layoutText) { checkboxOverlayKeys(layoutText, specs) }
         if (lr != null && textLen > 0) {
-            for (spec in specs) {
+            for ((spec, overlayKey) in specs.zip(specKeys)) key(overlayKey) {
                 val anchor = spec.anchorOffset.coerceIn(0, textLen - 1)
                 val line = lr.getLineForOffset(anchor)
                 val lineTop = lr.getLineTop(line).roundToInt()
@@ -654,14 +670,12 @@ fun MarkdownTextField(
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         if (onShiftIndent != null) {
                             IconButton(onClick = {
-                                Log.d(LOG_TAG, "bubble: outdent line $cursorLineIndex")
                                 pendingCursorFollow = PendingCursorFollow.ReindentedLine(cursorLineIndex)
                                 onShiftIndent(cursorLineIndex, -1)
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.AutoMirrored.Filled.KeyboardArrowLeft, contentDescription = "Outdent", modifier = Modifier.size(18.dp))
                             }
                             IconButton(onClick = {
-                                Log.d(LOG_TAG, "bubble: indent line $cursorLineIndex")
                                 pendingCursorFollow = PendingCursorFollow.ReindentedLine(cursorLineIndex)
                                 onShiftIndent(cursorLineIndex, 1)
                             }, modifier = Modifier.size(32.dp)) {
@@ -670,14 +684,12 @@ fun MarkdownTextField(
                         }
                         if (onMoveLine != null) {
                             IconButton(onClick = {
-                                Log.d(LOG_TAG, "bubble: move up line $cursorLineIndex")
                                 pendingCursorFollow = PendingCursorFollow.MovedLine(cursorLineIndex, cursorLineIndex - 1)
                                 onMoveLine(cursorLineIndex, -1)
                             }, modifier = Modifier.size(32.dp)) {
                                 Icon(Icons.Filled.KeyboardArrowUp, contentDescription = "Move up", modifier = Modifier.size(18.dp))
                             }
                             IconButton(onClick = {
-                                Log.d(LOG_TAG, "bubble: move down line $cursorLineIndex")
                                 pendingCursorFollow = PendingCursorFollow.MovedLine(cursorLineIndex, cursorLineIndex + 1)
                                 onMoveLine(cursorLineIndex, 1)
                             }, modifier = Modifier.size(32.dp)) {

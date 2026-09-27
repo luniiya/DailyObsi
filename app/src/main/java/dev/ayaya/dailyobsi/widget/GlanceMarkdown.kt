@@ -304,7 +304,6 @@ private fun GlanceMarkdownLine(line: String, lineIndex: Int, embedImages: Map<St
         checkboxMatch != null -> {
             val checked = checkboxMatch.groupValues[2].equals("x", ignoreCase = true)
             val indent = indentLevel(leadingWhitespaceOf(line))
-            android.util.Log.d("DailyObsiWidget", "GlanceMarkdownLine render: checkbox lineIndex=$lineIndex checked=$checked text=\"${checkboxMatch.groupValues[4]}\"")
             val toggleAction = actionRunCallback<GlanceCheckboxToggleAction>(actionParametersOf(LINE_INDEX_KEY to lineIndex))
             Row(
                 verticalAlignment = Alignment.Vertical.CenterVertically,
@@ -581,7 +580,6 @@ private fun decodeSampledBitmap(context: Context, uri: Uri, maxDimensionPx: Int)
 class GlanceCheckboxToggleAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val tag = "DailyObsiWidget"
-        android.util.Log.d(tag, "GlanceCheckboxToggleAction.onAction: FIRED glanceId=$glanceId parameters=$parameters")
         val lineIndex = parameters[LINE_INDEX_KEY]
         if (lineIndex == null) {
             android.util.Log.w(tag, "GlanceCheckboxToggleAction: no LINE_INDEX_KEY in parameters, bailing")
@@ -606,18 +604,9 @@ class GlanceCheckboxToggleAction : ActionCallback {
                 android.util.Log.w(tag, "no today's file found, bailing")
                 return@withLock
             }
-            val text = note.text
-            val line = text.lines().getOrNull(lineIndex)
-            val newText = DailyNote.toggleCheckbox(text, lineIndex)
-            val newLine = newText.lines().getOrNull(lineIndex)
-            android.util.Log.d(
-                tag,
-                "Glance checkbox line=$lineIndex changed=${line != newLine}",
-            )
-            DailyNote.writeText(context, note.uri, newText)
+            DailyNote.writeText(context, note.uri, DailyNote.toggleCheckbox(note.text, lineIndex))
         } }
         requestWidgetRefresh(context)
-        android.util.Log.d(tag, "GlanceCheckboxToggleAction: write done, refresh requested")
     }
 }
 
@@ -631,7 +620,6 @@ class GlanceCheckboxToggleAction : ActionCallback {
 class GlanceProgressDeltaAction : ActionCallback {
     override suspend fun onAction(context: Context, glanceId: GlanceId, parameters: ActionParameters) {
         val tag = "DailyObsiWidget"
-        android.util.Log.d(tag, "GlanceProgressDeltaAction.onAction: FIRED glanceId=$glanceId parameters=$parameters")
         val lineIndex = parameters[LINE_INDEX_KEY]
         val delta = parameters[DELTA_KEY]
         val max = parameters[MAX_KEY]
@@ -664,7 +652,6 @@ class GlanceProgressDeltaAction : ActionCallback {
                 android.util.Log.w(tag, "Glance progress value was invalid at line=$lineIndex")
                 return@withLock
             }
-            android.util.Log.d(tag, "Glance progress changed at line=$lineIndex")
             DailyNote.writeText(context, note.uri, DailyNote.replaceLine(text, lineIndex, newLine))
         } }
         // Debounced, not a raw refreshAllWidgets() call -- see
@@ -674,6 +661,5 @@ class GlanceProgressDeltaAction : ActionCallback {
         // debouncing keeps each tap's write instant and catches the display
         // up once, shortly after tapping actually stops.
         requestWidgetRefresh(context)
-        android.util.Log.d(tag, "GlanceProgressDeltaAction: write done, refresh requested")
     }
 }

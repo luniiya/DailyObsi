@@ -15,8 +15,10 @@ import kotlinx.coroutines.delay
 private const val SAVED_VISIBLE_MS = 1_000L
 
 /** Save state of the open note, shown in the top bar for every layout.
- *  "Saved" only flashes briefly after each save; a permanent "Saved" says
- *  nothing, while "Saving…"/"Unsaved"/errors stay up as long as they apply. */
+ *  "Saved" only flashes briefly after each save (a permanent "Saved" says
+ *  nothing). "Unsaved" isn't shown: autosave follows ~750ms after typing
+ *  stops, so it would just flicker on every keystroke. "Saving…" and errors
+ *  stay up as long as they apply. */
 @Composable
 fun SaveStatusLabel(status: SaveStatus, onRetry: () -> Unit) {
     var showSaved by remember { mutableStateOf(false) }
@@ -28,8 +30,7 @@ fun SaveStatusLabel(status: SaveStatus, onRetry: () -> Unit) {
         }
     }
     when (status) {
-        SaveStatus.Clean -> Unit
-        SaveStatus.Unsaved -> Text("Unsaved", style = MaterialTheme.typography.labelMedium)
+        SaveStatus.Clean, SaveStatus.Unsaved -> Unit
         SaveStatus.Saving -> Text("Saving…", style = MaterialTheme.typography.labelMedium)
         SaveStatus.Saved -> if (showSaved) {
             Text("Saved", style = MaterialTheme.typography.labelMedium)

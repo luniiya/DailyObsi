@@ -61,7 +61,6 @@ class ReadingViewWidget : GlanceAppWidget() {
     override val stateDefinition = PreferencesGlanceStateDefinition
 
     override suspend fun provideGlance(context: Context, id: GlanceId) {
-        android.util.Log.d("DailyObsiWidget", "ReadingViewWidget.provideGlance: CALLED id=$id")
         val light = appColorScheme(context, dark = false)
         val dark = appColorScheme(context, dark = true)
 

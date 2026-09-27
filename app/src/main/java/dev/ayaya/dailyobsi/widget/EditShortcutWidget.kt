@@ -96,7 +96,6 @@ class EditShortcutWidget : GlanceAppWidget() {
             val rawHeading = prefs[SELECTED_HEADING_KEY]
             val heading = rawHeading?.trimStart('#', ' ').orEmpty()
             val emoji = prefs[SELECTED_EMOJI_KEY]?.ifBlank { null } ?: DEFAULT_WIDGET_EMOJI
-            android.util.Log.d("DailyObsiWidget", "EditShortcutWidget content recompose: id=$id rawHeading=\"$rawHeading\" emoji=\"$emoji\"")
 
             GlanceTheme(colors = ColorProviders(light = light, dark = dark)) {
                 Column(

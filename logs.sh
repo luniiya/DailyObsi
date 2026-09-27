@@ -9,13 +9,13 @@
 #   ./logs.sh clear        just clear the buffer, print nothing
 #
 # All modes share the same tag/keyword filter: the app's own package, its
-# Log.d tags (DailyObsiPerf/DailyObsiEdit/DailyObsiWidget), and the system
+# log tags (DailyObsiWidget warnings; add a tag here when adding new logging), and the system
 # AppWidget/Glance components most relevant when debugging widget behavior.
 
 set -e
 
 ADB=/opt/android-sdk/platform-tools/adb
-PATTERN='dailyobsi|DailyObsiPerf|DailyObsiEdit|DailyObsiWidget|AppWidgetServiceImpl|GlanceAppWidget|AppWidgetHostView'
+PATTERN='dailyobsi|DailyObsiWidget|AppWidgetServiceImpl|GlanceAppWidget|AppWidgetHostView'
 CRASH_PATTERN='dailyobsi.*(fatal|exception|error)|IllegalArgumentException|GlanceAppWidget.*[Ee]rror|AndroidRuntime'
 
 case "$1" in
