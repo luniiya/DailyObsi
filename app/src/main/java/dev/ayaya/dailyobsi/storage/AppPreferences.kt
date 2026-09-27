@@ -3,8 +3,10 @@ package dev.ayaya.dailyobsi.storage
 import android.content.Context
 import android.util.Base64
 import dev.ayaya.dailyobsi.model.LayoutMode
+import dev.ayaya.dailyobsi.model.SectionId
 import dev.ayaya.dailyobsi.model.SectionMode
 import dev.ayaya.dailyobsi.model.normalizeHeading
+import java.time.LocalDate
 
 class AppPreferences(context: Context) {
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
@@ -28,6 +30,29 @@ class AppPreferences(context: Context) {
         prefs.edit().putString(modeKey(normalizeHeading(title)), mode.name).apply()
     }
 
+    /** Last tab the user had open on [date]'s note; survives the process being killed. */
+    fun lastSection(date: LocalDate): SectionId? {
+        if (prefs.getString(KEY_LAST_SECTION_DATE, null) != date.toString()) return null
+        val title = prefs.getString(KEY_LAST_SECTION_TITLE, null) ?: return null
+        return SectionId(title, prefs.getInt(KEY_LAST_SECTION_OCCURRENCE, 0))
+    }
+
+    fun setLastSection(date: LocalDate, id: SectionId) {
+        prefs.edit()
+            .putString(KEY_LAST_SECTION_DATE, date.toString())
+            .putString(KEY_LAST_SECTION_TITLE, id.normalizedTitle)
+            .putInt(KEY_LAST_SECTION_OCCURRENCE, id.occurrence)
+            .apply()
+    }
+
+    fun clearLastSection() {
+        prefs.edit()
+            .remove(KEY_LAST_SECTION_DATE)
+            .remove(KEY_LAST_SECTION_TITLE)
+            .remove(KEY_LAST_SECTION_OCCURRENCE)
+            .apply()
+    }
+
     private fun modeKey(normalizedTitle: String): String {
         val encoded = Base64.encodeToString(
             normalizedTitle.toByteArray(),
@@ -40,5 +65,8 @@ class AppPreferences(context: Context) {
         const val PREFS = "dailyobsi_ui"
         const val KEY_LAYOUT = "layout_mode"
         const val MODE_PREFIX = "section_mode_"
+        const val KEY_LAST_SECTION_DATE = "last_section_date"
+        const val KEY_LAST_SECTION_TITLE = "last_section_title"
+        const val KEY_LAST_SECTION_OCCURRENCE = "last_section_occurrence"
     }
 }

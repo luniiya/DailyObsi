@@ -123,6 +123,8 @@ class DailyObsiViewModel(
 
     fun selectSection(id: SectionId) {
         mutableState.update { it.copy(selectedSectionId = id) }
+        val date = mutableState.value.viewingDate
+        if (date == LocalDate.now()) preferences.setLastSection(date, id)
     }
 
     fun setSectionMode(id: SectionId, mode: SectionMode) {
@@ -178,6 +180,8 @@ class DailyObsiViewModel(
         val treeUri = current.dailyUri ?: return
         viewModelScope.launch {
             mutableState.update { it.copy(isCreating = true, message = null) }
+            // A fresh note always opens on its first tab.
+            preferences.clearLastSection()
             runCatching { repository.createToday(treeUri, current.templateUri) }
                 .onSuccess { refreshArchiveAndLoadSuspend(LocalDate.now()) }
                 .onFailure { error ->
@@ -196,7 +200,9 @@ class DailyObsiViewModel(
         ) {
             return
         }
-        refreshArchiveAndLoad(current.viewingDate)
+        // Coming back from another app: re-read the file (widgets may have
+        // written to it) without the loading screen, keeping the open tab.
+        viewModelScope.launch { refreshArchiveAndLoadSuspend(current.viewingDate, silent = true) }
     }
 
     fun flushForBackground() {
@@ -213,13 +219,13 @@ class DailyObsiViewModel(
         viewModelScope.launch { refreshArchiveAndLoadSuspend(date) }
     }
 
-    private suspend fun refreshArchiveAndLoadSuspend(date: LocalDate) {
+    private suspend fun refreshArchiveAndLoadSuspend(date: LocalDate, silent: Boolean = false) {
         val treeUri = mutableState.value.dailyUri ?: return
-        mutableState.update { it.copy(isLoading = true, message = null) }
+        if (!silent) mutableState.update { it.copy(isLoading = true, message = null) }
         try {
             val index = repository.index(treeUri)
             mutableState.update { it.copy(indexedNotes = index) }
-            loadIndexedDate(date)
+            loadIndexedDate(date, silent)
         } catch (error: Exception) {
             mutableState.update {
                 it.copy(
@@ -230,9 +236,11 @@ class DailyObsiViewModel(
         }
     }
 
-    private suspend fun loadIndexedDate(date: LocalDate) {
-        mutableState.update {
-            it.copy(isLoading = true, viewingDate = date, showCalendar = false, message = null)
+    private suspend fun loadIndexedDate(date: LocalDate, silent: Boolean = false) {
+        if (!silent) {
+            mutableState.update {
+                it.copy(isLoading = true, viewingDate = date, showCalendar = false, message = null)
+            }
         }
         val indexed = mutableState.value.indexedNotes[date]
         if (indexed == null) {
@@ -254,10 +262,21 @@ class DailyObsiViewModel(
     private fun applyDocument(document: NoteDocument?, date: LocalDate) {
         revision++
         saveCoordinator.markClean(revision)
+        val previous = mutableState.value
+        val sameNote = previous.document != null && previous.viewingDate == date
         val sections = document?.let { parseH2Sections(it.text) }.orEmpty()
-        val modes = sections.associate { it.id to preferences.sectionMode(it.title) }.toMutableMap()
-        var selected = sections.firstOrNull()?.id
-        var classicMode = SectionMode.READ
+        val modes = sections.associate { section ->
+            section.id to (previous.sectionModes[section.id].takeIf { sameNote }
+                ?: preferences.sectionMode(section.title))
+        }.toMutableMap()
+        // Reloading the note already on screen keeps its tab; otherwise fall
+        // back to the tab remembered for that date (today only), then the first.
+        val remembered = if (sameNote) previous.selectedSectionId
+        else if (date == LocalDate.now()) preferences.lastSection(date)
+        else null
+        var selected = remembered?.takeIf { id -> sections.any { it.id == id } }
+            ?: sections.firstOrNull()?.id
+        var classicMode = if (sameNote) previous.classicMode else SectionMode.READ
         if (!startDestinationApplied && date == LocalDate.now()) {
             val requested = openSectionHeading
                 ?.removePrefix("##")

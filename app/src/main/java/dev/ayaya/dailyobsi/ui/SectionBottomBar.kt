@@ -2,6 +2,7 @@ package dev.ayaya.dailyobsi.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -38,6 +39,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.coerceAtLeast
 import androidx.compose.ui.unit.dp
 import dev.ayaya.dailyobsi.model.NoteSection
 import dev.ayaya.dailyobsi.model.SectionIcon
@@ -52,10 +54,18 @@ fun SectionBottomBar(
     onSelect: (SectionId) -> Unit,
 ) {
     Surface(tonalElevation = 3.dp, shadowElevation = 4.dp) {
+        // Tabs share the bar's full width evenly; once they'd get narrower than
+        // MIN_TAB_WIDTH, they stop shrinking and the row scrolls instead.
+        BoxWithConstraints(Modifier.navigationBarsPadding()) {
+        val sidePadding = 6.dp
+        val spacing = 2.dp
+        val count = sections.size.coerceAtLeast(1)
+        val available = maxWidth - sidePadding * 2 - spacing * (count - 1)
+        val tabWidth = (available / count).coerceAtLeast(MIN_TAB_WIDTH)
         LazyRow(
-            modifier = Modifier.navigationBarsPadding().height(72.dp),
-            contentPadding = PaddingValues(horizontal = 6.dp, vertical = 5.dp),
-            horizontalArrangement = Arrangement.spacedBy(2.dp),
+            modifier = Modifier.height(72.dp),
+            contentPadding = PaddingValues(horizontal = sidePadding, vertical = 5.dp),
+            horizontalArrangement = Arrangement.spacedBy(spacing),
         ) {
             items(
                 items = sections,
@@ -63,7 +73,7 @@ fun SectionBottomBar(
             ) { section ->
                 val selected = section.id == selectedId
                 Column(
-                    modifier = Modifier.width(78.dp)
+                    modifier = Modifier.width(tabWidth)
                         .fillMaxHeight()
                         .clip(RoundedCornerShape(18.dp))
                         .background(
@@ -93,8 +103,11 @@ fun SectionBottomBar(
                 }
             }
         }
+        }
     }
 }
+
+private val MIN_TAB_WIDTH = 72.dp
 
 private fun iconFor(icon: SectionIcon): ImageVector = when (icon) {
     SectionIcon.TIME_UNTIL -> Icons.Filled.HourglassEmpty
