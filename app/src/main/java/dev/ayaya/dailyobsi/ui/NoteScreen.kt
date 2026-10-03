@@ -41,8 +41,14 @@ import dev.ayaya.dailyobsi.MarkdownView
 import dev.ayaya.dailyobsi.model.LayoutMode
 import dev.ayaya.dailyobsi.model.NoteSection
 import dev.ayaya.dailyobsi.model.SectionMode
+import dev.ayaya.dailyobsi.model.TODO_TAB_ID
+import dev.ayaya.dailyobsi.model.tabIds
 import dev.ayaya.dailyobsi.model.canSwipeBetweenTabs
 import dev.ayaya.dailyobsi.model.effectiveSectionMode
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.LocalLifecycleOwner
+import androidx.lifecycle.repeatOnLifecycle
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.distinctUntilChanged
 
 @OptIn(ExperimentalLayoutApi::class)
@@ -50,6 +56,8 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 fun NoteScreen(
     state: EditorUiState,
     model: DailyObsiViewModel,
+    todoState: TodoUiState,
+    todo: TodoViewModel,
     padding: PaddingValues,
     onAtTopChanged: (Boolean) -> Unit,
 ) {
@@ -74,12 +82,15 @@ fun NoteScreen(
                 else -> TabbedNote(
                     state,
                     model,
+                    todoState,
+                    todo,
                     showBottomBar,
                     onAtTopChanged,
                 )
             }
         }
-        if (state.document != null && !state.isHistorical) {
+        val todoOpen = state.layoutMode == LayoutMode.TABBED && state.todoTabSelected
+        if (state.document != null && !state.isHistorical && !todoOpen) {
             ModeToggleFab(
                 mode = activeMode,
                 // Keep the confirmation FAB clear of the editor utility
@@ -144,13 +155,18 @@ private fun NoSectionsMessage() {
 private fun TabbedNote(
     state: EditorUiState,
     model: DailyObsiViewModel,
+    todoState: TodoUiState,
+    todo: TodoViewModel,
     showBottomBar: Boolean,
     onAtTopChanged: (Boolean) -> Unit,
 ) {
-    val selectedIndex = state.sections.indexOfFirst { it.id == state.selectedSectionId }
+    val tabs = tabIds(state.sections, todoState.connected).map { id ->
+        state.sections.firstOrNull { it.id == id }?.tabSpec() ?: TODO_TAB_SPEC
+    }
+    val selectedIndex = tabs.indexOfFirst { it.id == state.selectedSectionId }
         .coerceAtLeast(0)
-    val pager = rememberPagerState(initialPage = selectedIndex) { state.sections.size }
-    val latestSections by rememberUpdatedState(state.sections)
+    val pager = rememberPagerState(initialPage = selectedIndex) { tabs.size }
+    val latestTabs by rememberUpdatedState(tabs)
 
     LaunchedEffect(selectedIndex) {
         if (pager.currentPage != selectedIndex) pager.scrollToPage(selectedIndex)
@@ -159,39 +175,56 @@ private fun TabbedNote(
         snapshotFlow { pager.currentPage }
             .distinctUntilChanged()
             .collect { page ->
-                latestSections.getOrNull(page)?.let { section ->
+                latestTabs.getOrNull(page)?.let { tab ->
                     model.saveNow()
-                    model.selectSection(section.id)
+                    model.selectSection(tab.id)
                 }
             }
     }
 
-    val activeMode = state.sections.getOrNull(pager.currentPage)?.let { section ->
-        state.sectionModes[section.id]
-    } ?: SectionMode.READ
+    val currentTab = tabs.getOrNull(pager.currentPage)?.id
+    // The todo tab has no Read/Write mode and no horizontal gestures of its own.
+    val swipeMode = if (currentTab == TODO_TAB_ID) {
+        SectionMode.WRITE
+    } else {
+        currentTab?.let { state.sectionModes[it] } ?: SectionMode.READ
+    }
 
     Column(Modifier.fillMaxSize()) {
         HorizontalPager(
             state = pager,
-            userScrollEnabled = canSwipeBetweenTabs(state.isHistorical, activeMode),
+            userScrollEnabled = canSwipeBetweenTabs(state.isHistorical, swipeMode),
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) { page ->
-            state.sections.getOrNull(page)?.let { section ->
-                SectionPage(
-                    section,
-                    state,
-                    model,
-                    onAtTopChanged = if (page == pager.currentPage) {
-                        onAtTopChanged
-                    } else {
-                        {}
-                    },
-                )
+            val pageAtTop: (Boolean) -> Unit = if (page == pager.currentPage) onAtTopChanged else { _ -> }
+            val tab = tabs.getOrNull(page) ?: return@HorizontalPager
+            if (tab.id == TODO_TAB_ID) {
+                LaunchedEffect(state.viewingDate) {
+                    todo.show(state.viewingDate, isToday = !state.isHistorical)
+                }
+                // Live-ish sync: while this tab is the one on screen and the app is
+                // visible, re-read the list so web/agent edits show up on their own.
+                if (page == pager.currentPage) {
+                    val lifecycle = LocalLifecycleOwner.current.lifecycle
+                    LaunchedEffect(lifecycle) {
+                        lifecycle.repeatOnLifecycle(Lifecycle.State.STARTED) {
+                            while (true) {
+                                delay(TodoViewModel.POLL_INTERVAL_MS)
+                                todo.poll()
+                            }
+                        }
+                    }
+                }
+                TodoTab(todoState, todo, pageAtTop)
+            } else {
+                state.sections.firstOrNull { it.id == tab.id }?.let { section ->
+                    SectionPage(section, state, model, onAtTopChanged = pageAtTop)
+                }
             }
         }
         if (showBottomBar) {
             SectionBottomBar(
-                sections = state.sections,
+                tabs = tabs,
                 selectedId = state.selectedSectionId,
                 onSelect = { id ->
                     model.saveNow()

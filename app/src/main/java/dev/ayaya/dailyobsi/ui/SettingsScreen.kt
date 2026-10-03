@@ -1,6 +1,8 @@
 package dev.ayaya.dailyobsi.ui
 
+import android.app.Activity
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -31,11 +33,14 @@ import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
 import dev.ayaya.dailyobsi.model.LayoutMode
 import dev.ayaya.dailyobsi.model.SectionMode
+import dev.ayaya.dailyobsi.todo.NextcloudSignIn
 
 @Composable
 fun SettingsScreen(
     state: EditorUiState,
     model: DailyObsiViewModel,
+    todoState: TodoUiState,
+    todo: TodoViewModel,
     padding: PaddingValues,
 ) {
     val context = LocalContext.current
@@ -66,6 +71,23 @@ fun SettingsScreen(
             button = if (state.templateUri == null) "Choose template" else "Change",
             onClick = { pickTemplate.launch(arrayOf("text/*", "*/*")) },
         )
+
+        Text("Nextcloud Daily Todo", style = MaterialTheme.typography.titleMedium)
+        PreferencePicker(
+            label = todoState.accountName?.let { "Todo tab uses $it" }
+                ?: "Not connected. Uses the account logged in to the Nextcloud app.",
+            button = if (todoState.connected) "Disconnect" else "Connect",
+            onClick = {
+                if (todoState.connected) {
+                    todo.disconnect()
+                } else {
+                    context.findActivity()?.let(NextcloudSignIn::start)?.let(todo::showMessage)
+                }
+            },
+        )
+        todoState.message?.takeIf { !todoState.connected }?.let {
+            Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
+        }
 
         Text("Note layout", style = MaterialTheme.typography.titleMedium)
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
@@ -115,6 +137,12 @@ private fun PreferencePicker(label: String, button: String, onClick: () -> Unit)
         Text(label, Modifier.weight(1f), style = MaterialTheme.typography.bodyMedium)
         Button(onClick = onClick) { Text(button) }
     }
+}
+
+private tailrec fun Context.findActivity(): Activity? = when (this) {
+    is Activity -> this
+    is ContextWrapper -> baseContext.findActivity()
+    else -> null
 }
 
 private fun persistTreePermission(context: Context, uri: Uri) {

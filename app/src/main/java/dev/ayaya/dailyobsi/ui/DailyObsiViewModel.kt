@@ -12,14 +12,17 @@ import dev.ayaya.dailyobsi.model.NoteDocument
 import dev.ayaya.dailyobsi.model.SaveStatus
 import dev.ayaya.dailyobsi.model.SectionId
 import dev.ayaya.dailyobsi.model.SectionMode
+import dev.ayaya.dailyobsi.model.TODO_TAB_ID
 import dev.ayaya.dailyobsi.model.normalizeHeading
 import dev.ayaya.dailyobsi.model.parseH2Sections
 import dev.ayaya.dailyobsi.model.replaceSectionBody
 import dev.ayaya.dailyobsi.model.restoredSection
+import dev.ayaya.dailyobsi.model.tabIds
 import dev.ayaya.dailyobsi.storage.AppPreferences
 import dev.ayaya.dailyobsi.storage.NoteRepository
 import dev.ayaya.dailyobsi.storage.SaveCoordinator
 import dev.ayaya.dailyobsi.storage.SaveRevision
+import dev.ayaya.dailyobsi.todo.NextcloudTodoClient
 import dev.ayaya.dailyobsi.widget.requestWidgetRefresh
 import java.time.LocalDate
 import kotlinx.coroutines.Dispatchers
@@ -271,7 +274,7 @@ class DailyObsiViewModel(
                 ?: preferences.sectionMode(section.title))
         }.toMutableMap()
         var selected = restoredSection(
-            sections,
+            tabIds(sections, NextcloudTodoClient.isConnected(context)),
             current = previous.selectedSectionId.takeIf { sameNote },
             remembered = if (date == LocalDate.now()) preferences.lastSection(date) else null,
         )
@@ -309,7 +312,7 @@ class DailyObsiViewModel(
         val sections = parseH2Sections(document.text)
         mutableState.update { current ->
             val selected = current.selectedSectionId
-                ?.takeIf { id -> sections.any { it.id == id } }
+                ?.takeIf { id -> id == TODO_TAB_ID || sections.any { it.id == id } }
                 ?: sections.firstOrNull()?.id
             current.copy(document = document, sections = sections, selectedSectionId = selected)
         }

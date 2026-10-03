@@ -15,8 +15,9 @@ import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 
 @Composable
-fun DailyObsiApp(model: DailyObsiViewModel) {
+fun DailyObsiApp(model: DailyObsiViewModel, todo: TodoViewModel) {
     val state by model.state.collectAsStateWithLifecycle()
+    val todoState by todo.state.collectAsStateWithLifecycle()
     val lifecycleOwner = LocalLifecycleOwner.current
     var noteAtTop by remember(
         state.viewingDate,
@@ -28,7 +29,11 @@ fun DailyObsiApp(model: DailyObsiViewModel) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
                 Lifecycle.Event.ON_STOP -> model.flushForBackground()
-                Lifecycle.Event.ON_START -> model.refreshAfterResume()
+                Lifecycle.Event.ON_START -> {
+                    model.refreshAfterResume()
+                    // The agent or the web UI may have changed the list meanwhile.
+                    todo.refresh()
+                }
                 else -> Unit
             }
         }
@@ -47,8 +52,8 @@ fun DailyObsiApp(model: DailyObsiViewModel) {
             DailyTopBar(state, showMemories = true, model)
         },
     ) { padding ->
-        if (state.showSettings) SettingsScreen(state, model, padding)
-        else NoteScreen(state, model, padding, onAtTopChanged = { noteAtTop = it })
+        if (state.showSettings) SettingsScreen(state, model, todoState, todo, padding)
+        else NoteScreen(state, model, todoState, todo, padding, onAtTopChanged = { noteAtTop = it })
     }
 
     if (state.showCalendar) {

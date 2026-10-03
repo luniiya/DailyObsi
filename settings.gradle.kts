@@ -11,6 +11,10 @@ dependencyResolutionManagement {
     repositories {
         google()
         mavenCentral()
+        // Nextcloud's Android-SingleSignOn is only published on JitPack.
+        maven("https://jitpack.io") {
+            content { includeGroup("com.github.nextcloud") }
+        }
     }
 }
 

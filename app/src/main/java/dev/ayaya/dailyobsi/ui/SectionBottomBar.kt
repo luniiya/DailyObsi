@@ -19,6 +19,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.List
 import androidx.compose.material.icons.filled.Build
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Checklist
 import androidx.compose.material.icons.filled.Create
 import androidx.compose.material.icons.filled.Face
 import androidx.compose.material.icons.filled.Favorite
@@ -45,12 +46,20 @@ import androidx.compose.ui.unit.dp
 import dev.ayaya.dailyobsi.model.NoteSection
 import dev.ayaya.dailyobsi.model.SectionIcon
 import dev.ayaya.dailyobsi.model.SectionId
+import dev.ayaya.dailyobsi.model.TODO_TAB_ID
 import dev.ayaya.dailyobsi.model.defaultSectionIcon
 import dev.ayaya.dailyobsi.model.sectionNavLabel
 
+/** One entry in the bottom bar: a note section or the todo tab. */
+data class TabSpec(val id: SectionId, val label: String, val icon: SectionIcon)
+
+fun NoteSection.tabSpec() = TabSpec(id, sectionNavLabel(title), defaultSectionIcon(title))
+
+val TODO_TAB_SPEC = TabSpec(TODO_TAB_ID, "Todo", SectionIcon.NEXTCLOUD_TODO)
+
 @Composable
 fun SectionBottomBar(
-    sections: List<NoteSection>,
+    tabs: List<TabSpec>,
     selectedId: SectionId?,
     onSelect: (SectionId) -> Unit,
 ) {
@@ -58,17 +67,17 @@ fun SectionBottomBar(
         // Tabs share the bar's full width evenly; once they'd get narrower than
         // MIN_TAB_WIDTH, they stop shrinking and the row scrolls instead.
         BoxWithConstraints(Modifier.navigationBarsPadding()) {
-        val tabWidth = bottomBarTabWidth(maxWidth, sections.size)
+        val tabWidth = bottomBarTabWidth(maxWidth, tabs.size)
         LazyRow(
             modifier = Modifier.height(72.dp),
             contentPadding = PaddingValues(horizontal = TAB_SIDE_PADDING, vertical = 5.dp),
             horizontalArrangement = Arrangement.spacedBy(TAB_SPACING),
         ) {
             items(
-                items = sections,
+                items = tabs,
                 key = { "${it.id.normalizedTitle}:${it.id.occurrence}" },
-            ) { section ->
-                val selected = section.id == selectedId
+            ) { tab ->
+                val selected = tab.id == selectedId
                 Column(
                     modifier = Modifier.width(tabWidth)
                         .fillMaxHeight()
@@ -79,7 +88,7 @@ fun SectionBottomBar(
                         )
                         .selectable(
                             selected = selected,
-                            onClick = { onSelect(section.id) },
+                            onClick = { onSelect(tab.id) },
                             role = Role.Tab,
                         )
                         .padding(horizontal = 4.dp, vertical = 6.dp),
@@ -87,12 +96,12 @@ fun SectionBottomBar(
                     verticalArrangement = Arrangement.spacedBy(3.dp),
                 ) {
                     Icon(
-                        imageVector = iconFor(defaultSectionIcon(section.title)),
+                        imageVector = iconFor(tab.icon),
                         contentDescription = null,
                         modifier = Modifier.size(24.dp),
                     )
                     Text(
-                        text = sectionNavLabel(section.title),
+                        text = tab.label,
                         style = MaterialTheme.typography.labelSmall,
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
@@ -127,5 +136,6 @@ private fun iconFor(icon: SectionIcon): ImageVector = when (icon) {
     SectionIcon.IDEAS -> Icons.Filled.Info
     SectionIcon.PEOPLE -> Icons.Filled.Person
     SectionIcon.HOME -> Icons.Filled.Home
+    SectionIcon.NEXTCLOUD_TODO -> Icons.Filled.Checklist
     SectionIcon.DEFAULT -> Icons.AutoMirrored.Filled.List
 }

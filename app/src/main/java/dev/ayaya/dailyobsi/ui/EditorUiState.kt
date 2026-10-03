@@ -8,6 +8,7 @@ import dev.ayaya.dailyobsi.model.NoteSection
 import dev.ayaya.dailyobsi.model.SaveStatus
 import dev.ayaya.dailyobsi.model.SectionId
 import dev.ayaya.dailyobsi.model.SectionMode
+import dev.ayaya.dailyobsi.model.TODO_TAB_ID
 import java.time.LocalDate
 
 data class EditorUiState(
@@ -29,6 +30,10 @@ data class EditorUiState(
     val message: String? = null,
 ) {
     val isHistorical: Boolean get() = viewingDate != LocalDate.now()
+    val todoTabSelected: Boolean get() = selectedSectionId == TODO_TAB_ID
+
+    /** The open note section; null while the todo tab is open. */
     val selectedSection: NoteSection?
-        get() = sections.firstOrNull { it.id == selectedSectionId } ?: sections.firstOrNull()
+        get() = if (todoTabSelected) null
+        else sections.firstOrNull { it.id == selectedSectionId } ?: sections.firstOrNull()
 }

@@ -2,6 +2,9 @@
 
 - Whenever searching online, if the search tool fails, just use curl from
   this computer.
+- **Use the `speak` MCP tool** (`mcp__speak__speak`) whenever you need the
+  user's attention (a question, a decision, something blocked) and to report
+  progress on long tasks (milestones, finished). *(as of 2026-10-03)*
 
 ## Persistent Memory Protocol
 

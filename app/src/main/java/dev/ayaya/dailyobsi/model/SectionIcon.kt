@@ -11,6 +11,8 @@ enum class SectionIcon {
     IDEAS,
     PEOPLE,
     HOME,
+    /** The Nextcloud Daily Todo tab, never guessed from a heading. */
+    NEXTCLOUD_TODO,
     DEFAULT,
 }
 

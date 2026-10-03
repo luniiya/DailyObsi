@@ -49,6 +49,8 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
+        // Required by Nextcloud's Android-SingleSignOn (checked by AAR metadata).
+        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -103,6 +105,13 @@ dependencies {
 
     // Renders ![[embed]] images straight from a content:// SAF Uri, no manual bitmap decoding.
     implementation("io.coil-kt:coil-compose:2.7.0")
+
+    // Nextcloud Daily Todo tab: borrows the account logged in to the Nextcloud
+    // Files app and proxies requests through it (docs/nextcloud-daily-todo.md).
+    // Pinned to 1.3.2: 1.3.3+ is built with Kotlin 2.2 / compileSdk 35+ deps
+    // that this toolchain (Kotlin 2.0.21, AGP 8.7.3) can't consume. Brings Gson.
+    implementation("com.github.nextcloud:Android-SingleSignOn:1.3.2")
+    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
 
     testImplementation("junit:junit:4.13.2")
     testImplementation("org.jetbrains.kotlinx:kotlinx-coroutines-test:1.9.0")

@@ -8,11 +8,16 @@ A native Android app + home-screen widgets that read/edit the user's Obsidian da
 
 The git-pulled file in shared storage is the single source of truth. App and widgets both read/write it directly; there is no intermediate state or sync of our own.
 
+## Tasks moved to Nextcloud (workflow change, 2026-10-03)
+
+An AI agent now manages the user's schedule, so **the task list (only the task list) moved out of Obsidian into Nextcloud** (https://nc.luniiya.me on the user's server `banana`). There, a user-built Nextcloud app, **Daily Todo**, builds one checklist per day from a template + calendar events + tasks. Everything else in the daily note stays in Obsidian. DailyObsi is getting a special tab that shows and edits the Nextcloud day list over HTTP. That's the one exception to "no backend" below: the Obsidian file is still the source of truth for everything else. Plugin model, API, auth (Nextcloud Single Sign-On through the Files app), the decisions taken and how the tab is built: **`docs/nextcloud-daily-todo.md`**. Code: `todo/` (pure model + `TodoCache` + `NextcloudTodoClient` + `NextcloudSignIn`), `ui/TodoViewModel.kt`, `ui/TodoTab.kt`; the tab is `TODO_TAB_ID`, appended by `tabIds`. The plugin source is read-only at `banana:/mnt/1/services/nextcloud/apps/daily_todo`; don't modify it from here.
+
 ## Constraints (decided, don't re-ask)
 
 - **No Android Studio.** CLI only: `./gradlew`, `adb`, and the scripts below.
 - **No Tasker, no Syncthing.** A Termux script `git pull`s the vault into Android *shared* storage (`~/storage/shared/...`), which is what makes SAF access viable.
-- **No backend/server.** The app reads/writes files directly via SAF.
+- **No backend/server of our own.** The app reads/writes the note directly via SAF. The only network access is the Nextcloud Daily Todo tab (see above).
+- **Use the `speak` MCP tool** (`mcp__speak__speak`) to get the user's attention (questions, decisions, blockers) and to report progress on long tasks (milestones, done).
 - **On-device testing is the user's job, not Claude's.** After a change: `./test.sh`, `./run.sh` (build + install), `./logs.sh crash`, then stop. Never drive the emulator with `adb shell input`/screenshots — the user tests on it at the same time. Never run destructive diagnostics (`pm clear`, deleting vault files) without asking: a `pm clear` once wiped the user's picked folder and every widget's config mid-debugging.
 
 ## Scripts

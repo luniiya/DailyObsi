@@ -5,9 +5,10 @@ import org.junit.Assert.assertNull
 import org.junit.Test
 
 class TabRestoreTest {
-    private val sections = parseH2Sections("## time until\na\n## meds\nb\n## tasks\nc")
-    private val first = sections[0].id
-    private val tasks = sections[2].id
+    private val parsed = parseH2Sections("## time until\na\n## meds\nb\n## tasks\nc")
+    private val sections = tabIds(parsed, todoConnected = false)
+    private val first = sections[0]
+    private val tasks = sections[2]
 
     @Test
     fun `reloading the same note keeps the open tab`() {
@@ -33,6 +34,26 @@ class TabRestoreTest {
     @Test
     fun `no sections means no tab`() {
         assertNull(restoredSection(emptyList(), current = tasks, remembered = tasks))
+    }
+
+    @Test
+    fun `the todo tab comes last, only when connected and the note has sections`() {
+        assertEquals(sections + TODO_TAB_ID, tabIds(parsed, todoConnected = true))
+        assertEquals(sections, tabIds(parsed, todoConnected = false))
+        assertEquals(emptyList<SectionId>(), tabIds(emptyList(), todoConnected = true))
+    }
+
+    @Test
+    fun `the todo tab is remembered like any other, and dropped once disconnected`() {
+        val withTodo = tabIds(parsed, todoConnected = true)
+        assertEquals(TODO_TAB_ID, restoredSection(withTodo, current = null, remembered = TODO_TAB_ID))
+        assertEquals(first, restoredSection(sections, current = TODO_TAB_ID, remembered = TODO_TAB_ID))
+    }
+
+    @Test
+    fun `no heading can produce the todo tab id`() {
+        val sneaky = parseH2Sections("## nextcloud daily todo\nx\n## Nextcloud Daily Todo\ny")
+        assertEquals(false, sneaky.any { it.id == TODO_TAB_ID })
     }
 
     @Test
