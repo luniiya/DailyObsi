@@ -136,6 +136,13 @@ fun todoDescendants(items: List<TodoItem>, id: Long): List<TodoItem> {
     return out
 }
 
+/** Rows that can be ticked, i.e. not `---`/`<br>` separators: what "3 of 8 done" counts. */
+fun todoCheckable(items: List<TodoItem>): List<TodoItem> = items.filter { separatorKind(it.title) == null }
+
+/** [items] with ticks that haven't reached the server yet applied the way the server will apply them. */
+fun withPendingTicks(items: List<TodoItem>, pending: Map<Long, Boolean>, completeSubtasks: Boolean): List<TodoItem> =
+    pending.entries.fold(items) { acc, (id, completed) -> withCompleted(acc, id, completed, completeSubtasks) }
+
 /** Optimistic tick, matching the server: subtasks are independent unless the
  *  board's [completeSubtasks] setting is on, and then only ticking cascades,
  *  never unticking. */

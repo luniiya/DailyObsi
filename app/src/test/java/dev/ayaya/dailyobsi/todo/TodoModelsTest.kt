@@ -143,4 +143,27 @@ class TodoModelsTest {
         assertEquals("{\"a\":2}", entry.json)
         assertEquals(2_000_000L, entry.fetchedAtMillis)
     }
+
+    @Test
+    fun `the widget shows ticks the server hasn't confirmed yet, the server's way`() {
+        val ticked = withPendingTicks(items, mapOf(2L to true, 5L to true), completeSubtasks = true)
+        assertEquals(listOf(false, true, true, true, true), ticked.map { it.completed })
+        assertEquals(items, withPendingTicks(items, emptyMap(), completeSubtasks = true))
+    }
+
+    @Test
+    fun `separators don't count towards done`() {
+        val list = items + item(9, title = "---") + item(10, title = "<br>")
+        assertEquals(items.map { it.id }, todoCheckable(list).map { it.id })
+    }
+
+    @Test
+    fun `cache writes for the same date don't trip over each other`() {
+        val dir = Files.createTempDirectory("todo").toFile()
+        val threads = (1..8).map { n -> Thread { repeat(20) { TodoCache(dir).store("2026-10-03", "{\"n\":$n}") } } }
+        threads.forEach { it.start() }
+        threads.forEach { it.join() }
+        assertTrue(TodoCache(dir).load("2026-10-03")!!.json.startsWith("{\"n\":"))
+        assertEquals(listOf("2026-10-03.json"), dir.list()!!.toList())
+    }
 }

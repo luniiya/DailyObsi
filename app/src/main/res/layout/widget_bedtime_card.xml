@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Accent text on a rounded card, like the other DailyObsi widgets. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bedtime_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@drawable/bedtime_card"
+    android:padding="10dp">
+    <TextView
+        android:id="@+id/bedtime_text"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:maxLines="1"
+        android:includeFontPadding="false"
+        android:autoSizeTextType="uniform"
+        android:autoSizeMinTextSize="10sp"
+        android:autoSizeMaxTextSize="240sp"
+        android:autoSizeStepGranularity="1sp"
+        android:fontFamily="sans-serif"
+        android:textStyle="bold"
+        android:textColor="@color/bedtime_accent" />
+</FrameLayout>

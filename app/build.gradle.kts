@@ -22,8 +22,8 @@ android {
         applicationId = "dev.ayaya.dailyobsi"
         minSdk = 26
         targetSdk = 35
-        versionCode = 5
-        versionName = "1.0"
+        versionCode = 6
+        versionName = "1.1.0"
     }
 
     signingConfigs {
@@ -102,6 +102,8 @@ dependencies {
 
     implementation("androidx.glance:glance-appwidget:1.1.1")
     implementation("androidx.glance:glance-material3:1.1.1")
+    // The Todo widget's background refresh. Same version Glance already pulls in.
+    implementation("androidx.work:work-runtime-ktx:2.7.1")
 
     // Renders ![[embed]] images straight from a content:// SAF Uri, no manual bitmap decoding.
     implementation("io.coil-kt:coil-compose:2.7.0")

@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Thin accent text, no background. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bedtime_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <TextView
+        android:id="@+id/bedtime_text"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:maxLines="1"
+        android:includeFontPadding="false"
+        android:autoSizeTextType="uniform"
+        android:autoSizeMinTextSize="10sp"
+        android:autoSizeMaxTextSize="240sp"
+        android:autoSizeStepGranularity="1sp"
+        android:fontFamily="sans-serif-light"
+        android:textColor="@color/bedtime_accent" />
+</FrameLayout>

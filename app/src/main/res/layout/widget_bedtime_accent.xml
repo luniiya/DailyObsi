@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Default style: just the countdown, as big as the widget allows, bold system font in the accent color, no background. -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/bedtime_root"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+    <TextView
+        android:id="@+id/bedtime_text"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:gravity="center"
+        android:maxLines="1"
+        android:includeFontPadding="false"
+        android:autoSizeTextType="uniform"
+        android:autoSizeMinTextSize="10sp"
+        android:autoSizeMaxTextSize="240sp"
+        android:autoSizeStepGranularity="1sp"
+        android:fontFamily="sans-serif"
+        android:textStyle="bold"
+        android:textColor="@color/bedtime_accent"
+        android:text="3h05m" />
+</FrameLayout>

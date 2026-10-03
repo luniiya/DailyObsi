@@ -2,6 +2,8 @@ package dev.ayaya.dailyobsi.ui
 
 import android.net.Uri
 import dev.ayaya.dailyobsi.model.IndexedNote
+import dev.ayaya.dailyobsi.model.BedtimeStyle
+import dev.ayaya.dailyobsi.model.DEFAULT_BEDTIME
 import dev.ayaya.dailyobsi.model.LayoutMode
 import dev.ayaya.dailyobsi.model.NoteDocument
 import dev.ayaya.dailyobsi.model.NoteSection
@@ -10,6 +12,7 @@ import dev.ayaya.dailyobsi.model.SectionId
 import dev.ayaya.dailyobsi.model.SectionMode
 import dev.ayaya.dailyobsi.model.TODO_TAB_ID
 import java.time.LocalDate
+import java.time.LocalTime
 
 data class EditorUiState(
     val dailyUri: Uri? = null,
@@ -17,6 +20,8 @@ data class EditorUiState(
     val showSettings: Boolean = false,
     val showCalendar: Boolean = false,
     val layoutMode: LayoutMode = LayoutMode.TABBED,
+    val bedtime: LocalTime = DEFAULT_BEDTIME,
+    val bedtimeStyle: BedtimeStyle = BedtimeStyle.ACCENT,
     val classicMode: SectionMode = SectionMode.READ,
     val document: NoteDocument? = null,
     val viewingDate: LocalDate = LocalDate.now(),

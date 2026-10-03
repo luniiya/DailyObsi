@@ -51,6 +51,19 @@ class NextcloudTodoClient(context: Context) {
 
     suspend fun day(date: String): String = request("GET", "/api/day/$date")
 
+    /** [requested]'s raw JSON and parsed day. When [viewingToday], follows the
+     *  board's rollover to the server's logical today (see [todoRetryDate]).
+     *  Malformed JSON throws a RuntimeException. */
+    suspend fun dayFollowingRollover(requested: String, viewingToday: Boolean): Pair<String, TodoDay> {
+        var json = day(requested)
+        var parsed = parseTodoDay(json)
+        todoRetryDate(requested, parsed, viewingToday)?.let { logical ->
+            json = day(logical)
+            parsed = parseTodoDay(json)
+        }
+        return json to parsed
+    }
+
     /** ~3 ms on the server vs ~21 ms for the whole day; poll this. */
     suspend fun dayVersion(date: String): String? = parseDayVersion(request("GET", "/api/day/$date/version"))
 

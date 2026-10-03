@@ -1,6 +1,15 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- Bedtime widget: an exact, non-waking alarm at each minute change.
+         USE_EXACT_ALARM is granted at install on Android 13+; 12 used SCHEDULE_EXACT_ALARM. -->
+    <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
+    <uses-permission
+        android:name="android.permission.SCHEDULE_EXACT_ALARM"
+        android:maxSdkVersion="32" />
+    <!-- Alarms don't survive a reboot; the bedtime widget re-arms itself on boot. -->
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:allowBackup="false"
         android:label="@string/app_name"
@@ -52,6 +61,34 @@
             <meta-data
                 android:name="android.appwidget.provider"
                 android:resource="@xml/reading_view_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.TodoWidgetReceiver"
+            android:exported="false"
+            android:label="@string/todo_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/todo_widget_info" />
+        </receiver>
+
+        <receiver
+            android:name=".widget.BedtimeWidgetReceiver"
+            android:exported="false"
+            android:label="@string/bedtime_widget_label">
+            <intent-filter>
+                <action android:name="android.appwidget.action.APPWIDGET_UPDATE" />
+                <action android:name="android.intent.action.TIME_SET" />
+                <action android:name="android.intent.action.TIMEZONE_CHANGED" />
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+                <action android:name="android.intent.action.MY_PACKAGE_REPLACED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.appwidget.provider"
+                android:resource="@xml/bedtime_widget_info" />
         </receiver>
 
         <!-- Configuration activity for EditShortcutWidget and HeadingWidget

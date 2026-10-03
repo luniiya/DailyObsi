@@ -28,7 +28,10 @@ fun DailyObsiApp(model: DailyObsiViewModel, todo: TodoViewModel) {
     DisposableEffect(lifecycleOwner) {
         val observer = LifecycleEventObserver { _, event ->
             when (event) {
-                Lifecycle.Event.ON_STOP -> model.flushForBackground()
+                Lifecycle.Event.ON_STOP -> {
+                    model.flushForBackground()
+                    todo.flushWidget()
+                }
                 Lifecycle.Event.ON_START -> {
                     model.refreshAfterResume()
                     // The agent or the web UI may have changed the list meanwhile.

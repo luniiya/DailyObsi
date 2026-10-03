@@ -214,3 +214,20 @@ the natural gesture is **long-press a row, drag, release** (`TodoTab`):
   top at the end instead of reserving a column.
 - The "Add a task" field is a soft rounded pill (no outline) that gets an accent
   border when focused, plus a round "add" button once there's text.
+
+## Home-screen widget (2026-10-03)
+
+The user asked for a Todo widget that refreshes rarely (battery) but still refreshes, and that **never does its work on the main thread**. That rule exists because of an earlier bug that took a long time to find: Glance composes on the app's main thread, and a note read in the composable froze the app (see `widgetDataVersion` in `WidgetKeys.kt`).
+
+`widget/TodoWidget.kt` ("Nextcloud Todo" in the picker) shows today's list with working ticks, subtasks indented, `---`/`<br>` separators, "3/8" progress and the time of the last fetch. Tapping the title opens the app on the Todo tab (`MainActivity.EXTRA_OPEN_TODO`), and ↻ refreshes now.
+
+- **The widget never touches the network.** It renders the same `TodoCache` file the tab writes (`TodoCache.forApp`).
+- **How it redraws:** `refreshTodoWidgets` reads the cache on IO *first*, then bumps a stamp in each instance's Glance state, so the recompose only reads memory and draws the new data in one frame. The first version loaded in `produceState` after the recompose, which left the widget one refresh behind: a tick reached the server, but the widget only showed it after the next ↻.
+- **What refreshes the cache:**
+  - **A WorkManager job every 30 minutes**, only when there's a network (`scheduleTodoWidgetSync`). It's scheduled when the first widget is placed, cancelled when the last one is removed, and a no-op if none is placed.
+  - **The app going to the background**: `TodoViewModel.flushWidget` re-renders the widget from what the tab fetched, with no extra request.
+  - **A tick on the widget**: `TodoWidgetToggleAction` shows the tick at once (`pendingTicks` → `withPendingTicks`, honouring `completeSubtasks`), sends it, then re-fetches the day.
+  - **↻.**
+  - **A new day with nothing cached**: it asks for a one-time sync, throttled to once every 5 minutes so an unreachable server can't loop.
+- **Network calls** run in the worker or inline in the action's own suspend call. They never go to a detached scope, which `WidgetKeys.kt` explains got deferred by background limits. They're serialized by a mutex and have a 20s timeout. Offline keeps the cached list. A failed tick reverts and shows the error on the widget.
+- The fetch-with-rollover logic is shared with the tab: `NextcloudTodoClient.dayFollowingRollover`.

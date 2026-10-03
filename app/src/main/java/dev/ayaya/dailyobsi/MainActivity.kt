@@ -31,6 +31,8 @@ class MainActivity : ComponentActivity() {
     companion object {
         const val EXTRA_OPEN_EDIT_MODE = "open_edit_mode"
         const val EXTRA_OPEN_SECTION_HEADING = "open_section_heading"
+        /** From the Todo widget: open on the Nextcloud Todo tab. */
+        const val EXTRA_OPEN_TODO = "open_todo_tab"
     }
 
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -41,6 +43,7 @@ class MainActivity : ComponentActivity() {
         )
         val startInEditMode = intent.getBooleanExtra(EXTRA_OPEN_EDIT_MODE, false)
         val openSectionHeading = intent.getStringExtra(EXTRA_OPEN_SECTION_HEADING)
+        val openTodoTab = intent.getBooleanExtra(EXTRA_OPEN_TODO, false)
         setContent {
             DailyObsiTheme {
                 val model: DailyObsiViewModel = viewModel(
@@ -48,6 +51,7 @@ class MainActivity : ComponentActivity() {
                         application,
                         startInEditMode,
                         openSectionHeading,
+                        openTodoTab,
                     ),
                 )
                 Surface(Modifier.fillMaxSize()) {

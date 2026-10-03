@@ -97,6 +97,7 @@ import dev.ayaya.dailyobsi.todo.canDelete
 import dev.ayaya.dailyobsi.todo.canRename
 import dev.ayaya.dailyobsi.todo.reorderedIds
 import dev.ayaya.dailyobsi.todo.separatorKind
+import dev.ayaya.dailyobsi.todo.todoCheckable
 import dev.ayaya.dailyobsi.todo.todoDepths
 import dev.ayaya.dailyobsi.todo.todoSourceLabel
 import java.text.DateFormat
@@ -217,7 +218,7 @@ fun TodoTab(
                     val items = preview ?: day.items
                     val depths = remember(items) { todoDepths(items) }
                     val dragBlock = dragId?.let { todoBlock(items, it) }.orEmpty()
-                    val checkable = items.filter { separatorKind(it.title) == null }
+                    val checkable = todoCheckable(items)
                     LazyColumn(
                         state = listState,
                         modifier = Modifier.fillMaxSize(),

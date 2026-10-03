@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Bedtime widget (plain RemoteViews, so no Glance theme): Material3 baseline primary/surface.
+         values-v31 swaps in the Material You system palette, like appColorScheme does. -->
+    <color name="bedtime_accent">#6750A4</color>
+    <color name="bedtime_surface">#FEF7FF</color>
+</resources>

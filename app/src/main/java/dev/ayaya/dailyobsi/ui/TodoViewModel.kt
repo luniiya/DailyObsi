@@ -13,9 +13,9 @@ import dev.ayaya.dailyobsi.todo.inOrder
 import dev.ayaya.dailyobsi.todo.parseTodoDay
 import dev.ayaya.dailyobsi.todo.reorderedIds
 import dev.ayaya.dailyobsi.todo.todoNeedsReload
-import dev.ayaya.dailyobsi.todo.todoRetryDate
 import dev.ayaya.dailyobsi.todo.withCompleted
-import java.io.File
+import dev.ayaya.dailyobsi.widget.refreshTodoWidgets
+import dev.ayaya.dailyobsi.widget.scheduleTodoWidgetSync
 import java.time.LocalDate
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -56,12 +56,14 @@ data class TodoUiState(
  */
 class TodoViewModel(application: Application) : AndroidViewModel(application) {
     private val client = NextcloudTodoClient(application)
-    private val cache = TodoCache(File(application.filesDir, "todo-cache"))
+    private val cache = TodoCache.forApp(application)
     private val writeLock = Mutex()
     private var pendingWrites = 0
     private var dragging = false
     private var viewingToday = true
     private var loadJob: Job? = null
+    /** The cache or the account changed since the Todo widget last rendered. */
+    private var widgetStale = false
 
     private val mutableState = MutableStateFlow(TodoUiState(accountName = client.accountName))
     val state: StateFlow<TodoUiState> = mutableState.asStateFlow()
@@ -119,17 +121,30 @@ class TodoViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    /** On ON_STOP: let the home-screen widget pick up what this session fetched or changed. */
+    fun flushWidget() {
+        if (!widgetStale) return
+        widgetStale = false
+        val context = getApplication<Application>()
+        viewModelScope.launch {
+            if (client.accountName != null) scheduleTodoWidgetSync(context)
+            refreshTodoWidgets(context)
+        }
+    }
+
     fun clearMessage() = mutableState.update { it.copy(message = null) }
 
     fun showMessage(message: String) = mutableState.update { it.copy(message = message) }
 
     fun onConnected(account: SingleSignOnAccount) {
         client.connect(account)
+        widgetStale = true
         mutableState.update { TodoUiState(accountName = account.name) }
     }
 
     fun disconnect() {
         client.disconnect()
+        widgetStale = true
         loadJob?.cancel()
         mutableState.update { TodoUiState() }
     }
@@ -213,13 +228,9 @@ class TodoViewModel(application: Application) : AndroidViewModel(application) {
         loadJob = viewModelScope.launch {
             if (!silent) mutableState.update { it.copy(loading = true) }
             try {
-                var json = client.day(key)
-                var day = parseTodoDay(json)
-                todoRetryDate(key, day, viewingToday)?.let { logical ->
-                    json = client.day(logical)
-                    day = parseTodoDay(json)
-                }
+                val (json, day) = client.dayFollowingRollover(key, viewingToday)
                 withContext(Dispatchers.IO) { cache.store(key, json) }
+                widgetStale = true
                 // A write started while this was in flight; its own reload will follow.
                 if (pendingWrites > 0) {
                     mutableState.update { it.copy(loading = false) }

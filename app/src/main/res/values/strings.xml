@@ -10,8 +10,12 @@
     <string name="edit_shortcut_widget_label">Edit Heading</string>
     <string name="heading_widget_label">One Heading</string>
     <string name="reading_view_widget_label">Full Note</string>
+    <string name="todo_widget_label">Nextcloud Todo</string>
+    <string name="bedtime_widget_label">Bedtime Countdown</string>
 
     <string name="edit_shortcut_widget_description">Jump straight to editing one heading of today\'s note</string>
     <string name="heading_widget_description">Shows one heading of today\'s note</string>
     <string name="reading_view_widget_description">Shows the whole reading view of today\'s note</string>
+    <string name="todo_widget_description">Today\'s Nextcloud Daily Todo list, tickable</string>
+    <string name="bedtime_widget_description">Time left until bedtime (set it in DailyObsi\'s settings)</string>
 </resources>

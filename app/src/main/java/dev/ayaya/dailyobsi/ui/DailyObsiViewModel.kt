@@ -7,7 +7,9 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
 import dev.ayaya.dailyobsi.VaultPrefs
+import dev.ayaya.dailyobsi.model.BedtimeStyle
 import dev.ayaya.dailyobsi.model.LayoutMode
+import dev.ayaya.dailyobsi.widget.BedtimeWidgetReceiver
 import dev.ayaya.dailyobsi.model.NoteDocument
 import dev.ayaya.dailyobsi.model.SaveStatus
 import dev.ayaya.dailyobsi.model.SectionId
@@ -25,6 +27,7 @@ import dev.ayaya.dailyobsi.storage.SaveRevision
 import dev.ayaya.dailyobsi.todo.NextcloudTodoClient
 import dev.ayaya.dailyobsi.widget.requestWidgetRefresh
 import java.time.LocalDate
+import java.time.LocalTime
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +41,7 @@ class DailyObsiViewModel(
     application: Application,
     private val startInEditMode: Boolean,
     private val openSectionHeading: String?,
+    private val openTodoTab: Boolean = false,
 ) : AndroidViewModel(application) {
     private val context = application.applicationContext
     private val preferences = AppPreferences(context)
@@ -62,6 +66,8 @@ class DailyObsiViewModel(
             templateUri = VaultPrefs.getTemplateUri(context),
             showSettings = VaultPrefs.getTreeUri(context) == null,
             layoutMode = preferences.layoutMode,
+            bedtime = preferences.bedtime,
+            bedtimeStyle = preferences.bedtimeStyle,
         ),
     )
     val state: StateFlow<EditorUiState> = mutableState.asStateFlow()
@@ -111,6 +117,18 @@ class DailyObsiViewModel(
     fun setLayoutMode(mode: LayoutMode) {
         preferences.layoutMode = mode
         mutableState.update { it.copy(layoutMode = mode) }
+    }
+
+    fun setBedtime(time: LocalTime) {
+        preferences.bedtime = time
+        mutableState.update { it.copy(bedtime = time) }
+        BedtimeWidgetReceiver.refresh(context)
+    }
+
+    fun setBedtimeStyle(style: BedtimeStyle) {
+        preferences.bedtimeStyle = style
+        mutableState.update { it.copy(bedtimeStyle = style) }
+        BedtimeWidgetReceiver.refresh(context)
     }
 
     fun configuredMode(title: String): SectionMode = preferences.sectionMode(title)
@@ -291,6 +309,9 @@ class DailyObsiViewModel(
                 selected = requestedSection.id
                 modes[selected] = SectionMode.WRITE
             }
+            if (openTodoTab && TODO_TAB_ID in tabIds(sections, NextcloudTodoClient.isConnected(context))) {
+                selected = TODO_TAB_ID
+            }
             if (startInEditMode) classicMode = SectionMode.WRITE
             startDestinationApplied = true
         }
@@ -324,9 +345,10 @@ class DailyObsiViewModel(
         private val application: Application,
         private val startInEditMode: Boolean,
         private val openSectionHeading: String?,
+        private val openTodoTab: Boolean = false,
     ) : ViewModelProvider.Factory {
         @Suppress("UNCHECKED_CAST")
         override fun <T : ViewModel> create(modelClass: Class<T>): T =
-            DailyObsiViewModel(application, startInEditMode, openSectionHeading) as T
+            DailyObsiViewModel(application, startInEditMode, openSectionHeading, openTodoTab) as T
     }
 }

@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
+import android.text.format.DateFormat
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.layout.Arrangement
@@ -19,7 +20,16 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TextButton
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberTimePickerState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.SegmentedButton
 import androidx.compose.material3.SegmentedButtonDefaults
@@ -31,9 +41,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.documentfile.provider.DocumentFile
+import dev.ayaya.dailyobsi.model.BedtimeStyle
 import dev.ayaya.dailyobsi.model.LayoutMode
 import dev.ayaya.dailyobsi.model.SectionMode
 import dev.ayaya.dailyobsi.todo.NextcloudSignIn
+import java.time.LocalTime
+import java.time.format.DateTimeFormatter
+import java.time.format.FormatStyle
 
 @Composable
 fun SettingsScreen(
@@ -89,6 +103,33 @@ fun SettingsScreen(
             Text(it, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodyMedium)
         }
 
+        Text("Bedtime countdown widget", style = MaterialTheme.typography.titleMedium)
+        var pickingBedtime by remember { mutableStateOf(false) }
+        PreferencePicker(
+            label = "Counts down to " + bedtimeFormat.format(state.bedtime),
+            button = "Change",
+            onClick = { pickingBedtime = true },
+        )
+        SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
+            BedtimeStyle.entries.forEachIndexed { index, style ->
+                SegmentedButton(
+                    selected = state.bedtimeStyle == style,
+                    onClick = { model.setBedtimeStyle(style) },
+                    shape = SegmentedButtonDefaults.itemShape(index, BedtimeStyle.entries.size),
+                ) { Text(style.label) }
+            }
+        }
+        if (pickingBedtime) {
+            BedtimeDialog(
+                initial = state.bedtime,
+                onDismiss = { pickingBedtime = false },
+                onConfirm = {
+                    model.setBedtime(it)
+                    pickingBedtime = false
+                },
+            )
+        }
+
         Text("Note layout", style = MaterialTheme.typography.titleMedium)
         SingleChoiceSegmentedButtonRow(Modifier.fillMaxWidth()) {
             LayoutMode.entries.forEachIndexed { index, mode ->
@@ -126,6 +167,28 @@ fun SettingsScreen(
         Spacer(Modifier.height(8.dp))
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun BedtimeDialog(initial: LocalTime, onDismiss: () -> Unit, onConfirm: (LocalTime) -> Unit) {
+    val context = LocalContext.current
+    val picker = rememberTimePickerState(
+        initialHour = initial.hour,
+        initialMinute = initial.minute,
+        is24Hour = DateFormat.is24HourFormat(context),
+    )
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("Bedtime") },
+        text = { TimePicker(picker) },
+        confirmButton = {
+            TextButton(onClick = { onConfirm(LocalTime.of(picker.hour, picker.minute)) }) { Text("OK") }
+        },
+        dismissButton = { TextButton(onClick = onDismiss) { Text("Cancel") } },
+    )
+}
+
+private val bedtimeFormat: DateTimeFormatter = DateTimeFormatter.ofLocalizedTime(FormatStyle.SHORT)
 
 @Composable
 private fun PreferencePicker(label: String, button: String, onClick: () -> Unit) {
