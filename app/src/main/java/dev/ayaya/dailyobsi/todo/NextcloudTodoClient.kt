@@ -51,6 +51,9 @@ class NextcloudTodoClient(context: Context) {
 
     suspend fun day(date: String): String = request("GET", "/api/day/$date")
 
+    /** ~3 ms on the server vs ~21 ms for the whole day; poll this. */
+    suspend fun dayVersion(date: String): String? = parseDayVersion(request("GET", "/api/day/$date/version"))
+
     suspend fun complete(id: Long, completed: Boolean) {
         request("PUT", "/api/items/$id/complete", mapOf("completed" to completed))
     }

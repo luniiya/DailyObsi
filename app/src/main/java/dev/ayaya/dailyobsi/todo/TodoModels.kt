@@ -26,6 +26,10 @@ data class TodoDay(
     val editable: Boolean,
     val future: Boolean,
     val items: List<TodoItem>,
+    /** Fingerprint of everything the day shows; `GET /api/day/{date}/version` returns the same. */
+    val version: String? = null,
+    /** Board setting: ticking a parent also ticks its subtasks. Off (independent) by default. */
+    val completeSubtasks: Boolean = false,
 )
 
 enum class SeparatorKind { RULE, SPACE }
@@ -45,8 +49,20 @@ fun parseTodoDay(json: String): TodoDay {
         editable = root.bool("editable"),
         future = root.bool("future"),
         items = root.getAsJsonArray("items")?.map { parseItem(it.asJsonObject) }.orEmpty(),
+        version = root.string("version"),
+        completeSubtasks = root.bool("completeSubtasks"),
     )
 }
+
+/** The `{ "version": "…" }` answer of the cheap "has this day changed?" check. */
+fun parseDayVersion(json: String): String? = runCatching {
+    JsonParser.parseString(json).asJsonObject.string("version")
+}.getOrNull()
+
+/** Whether a poll has to fetch the whole day: only when the server's
+ *  fingerprint moved, or when there's nothing to compare against. */
+fun todoNeedsReload(shown: String?, server: String?): Boolean =
+    shown == null || server == null || shown != server
 
 private fun parseItem(o: JsonObject) = TodoItem(
     id = o.get("id").asLong,
@@ -120,12 +136,13 @@ fun todoDescendants(items: List<TodoItem>, id: Long): List<TodoItem> {
     return out
 }
 
-/** Optimistic tick, matching the server: completing a parent completes its
- *  subtasks, reopening it leaves them alone. */
-fun withCompleted(items: List<TodoItem>, id: Long, completed: Boolean): List<TodoItem> {
+/** Optimistic tick, matching the server: subtasks are independent unless the
+ *  board's [completeSubtasks] setting is on, and then only ticking cascades,
+ *  never unticking. */
+fun withCompleted(items: List<TodoItem>, id: Long, completed: Boolean, completeSubtasks: Boolean): List<TodoItem> {
     val targets = buildSet {
         add(id)
-        if (completed) todoDescendants(items, id).forEach { add(it.id) }
+        if (completed && completeSubtasks) todoDescendants(items, id).forEach { add(it.id) }
     }
     return items.map { if (it.id in targets) it.copy(completed = completed) else it }
 }
@@ -154,6 +171,25 @@ fun reorderedIds(items: List<TodoItem>, id: Long, delta: Int): List<Long>? {
     }
     walk(null)
     return order
+}
+
+/** The sibling [delta] steps away from [id] (same parent), or null at either end. */
+fun todoNeighbor(items: List<TodoItem>, id: Long, delta: Int): Long? {
+    val item = items.firstOrNull { it.id == id } ?: return null
+    val known = items.mapTo(HashSet()) { it.id }
+    val siblings = items.filter { parentKey(it, known) == parentKey(item, known) }.map { it.id }
+    val index = siblings.indexOf(id)
+    return siblings.getOrNull(index + delta)
+}
+
+/** [id] and everything below it: what moves together when it's dragged. */
+fun todoBlock(items: List<TodoItem>, id: Long): Set<Long> =
+    setOf(id) + todoDescendants(items, id).map { it.id }
+
+/** [items] rearranged into [order] (ids from [reorderedIds]); unknown ids are dropped. */
+fun inOrder(items: List<TodoItem>, order: List<Long>): List<TodoItem> {
+    val byId = items.associateBy { it.id }
+    return order.mapNotNull(byId::get)
 }
 
 fun canRename(item: TodoItem): Boolean =

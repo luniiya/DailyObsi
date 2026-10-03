@@ -33,6 +33,17 @@ class TodoModelsTest {
     }
 
     @Test
+    fun `polling fetches the day only when its version moved`() {
+        assertEquals("v1", parseTodoDay("""{"day":"d","items":[],"version":"v1"}""").version)
+        assertNull(parseTodoDay("""{"day":"d","items":[]}""").version)
+        assertEquals("v2", parseDayVersion("""{"version":"v2"}"""))
+        assertFalse(todoNeedsReload("v1", "v1"))
+        assertTrue(todoNeedsReload("v1", "v2"))
+        assertTrue(todoNeedsReload(null, "v1"))
+        assertTrue(todoNeedsReload("v1", null))
+    }
+
+    @Test
     fun `server error messages and created ids are read from the body`() {
         assertEquals("Historical days are read-only", serverErrorMessage("""{"error":"Historical days are read-only"}"""))
         assertNull(serverErrorMessage("<html>login</html>"))
@@ -58,10 +69,18 @@ class TodoModelsTest {
     }
 
     @Test
-    fun `ticking a parent ticks its subtasks, unticking leaves them`() {
-        val done = withCompleted(items, 2, true)
+    fun `subtasks are independent by default`() {
+        val done = withCompleted(items, 2, true, completeSubtasks = false)
+        assertEquals(listOf(false, true, false, false, false), done.map { it.completed })
+        assertFalse(parseTodoDay("""{"day":"d","items":[]}""").completeSubtasks)
+    }
+
+    @Test
+    fun `with the board setting on, ticking a parent ticks its subtasks, unticking leaves them`() {
+        assertTrue(parseTodoDay("""{"day":"d","items":[],"completeSubtasks":true}""").completeSubtasks)
+        val done = withCompleted(items, 2, true, completeSubtasks = true)
         assertEquals(listOf(false, true, true, true, false), done.map { it.completed })
-        val reopened = withCompleted(done, 2, false)
+        val reopened = withCompleted(done, 2, false, completeSubtasks = true)
         assertEquals(listOf(false, false, true, true, false), reopened.map { it.completed })
     }
 
@@ -78,6 +97,20 @@ class TodoModelsTest {
         assertNull(reorderedIds(items, 4, 1))
         assertNull(reorderedIds(items, 1, -1))
         assertNull(reorderedIds(items, 5, 1))
+    }
+
+    @Test
+    fun `dragging moves a block past whole sibling blocks`() {
+        assertEquals(5L, todoNeighbor(items, 2, 1))
+        assertEquals(1L, todoNeighbor(items, 2, -1))
+        assertEquals(4L, todoNeighbor(items, 3, 1))
+        assertNull(todoNeighbor(items, 4, 1))
+        assertEquals(setOf(2L, 3, 4), todoBlock(items, 2))
+        assertEquals(setOf(5L), todoBlock(items, 5))
+        // Two drag steps down from the top = one reorder call with the final order.
+        val once = inOrder(items, reorderedIds(items, 1, 1)!!)
+        val twice = inOrder(once, reorderedIds(once, 1, 1)!!)
+        assertEquals(listOf(2L, 3, 4, 5, 1), twice.map { it.id })
     }
 
     @Test

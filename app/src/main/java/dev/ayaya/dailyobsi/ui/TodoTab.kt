@@ -1,6 +1,32 @@
 package dev.ayaya.dailyobsi.ui
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.detectDragGesturesAfterLongPress
+import androidx.compose.foundation.gestures.scrollBy
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.shape.CircleShape
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.material3.FilledTonalIconButton
+import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.withFrameNanos
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalHapticFeedback
+import androidx.compose.ui.text.input.KeyboardCapitalization
+import androidx.compose.ui.zIndex
+import dev.ayaya.dailyobsi.todo.inOrder
+import dev.ayaya.dailyobsi.todo.todoBlock
+import dev.ayaya.dailyobsi.todo.todoNeighbor
+import kotlin.math.abs
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -40,7 +66,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TextField
@@ -98,6 +123,63 @@ fun TodoTab(
     var draft by remember(state.requestedDate) { mutableStateOf<Draft?>(null) }
     val listState = rememberLazyListState()
     val latestOnAtTopChanged by rememberUpdatedState(onAtTopChanged)
+    val latestItems by rememberUpdatedState(day?.items.orEmpty())
+    val haptics = LocalHapticFeedback.current
+    val fallbackRowPx = with(LocalDensity.current) { 56.dp.toPx() }
+    val edgePx = with(LocalDensity.current) { 72.dp.toPx() }
+
+    // Long-press drag: [preview] is the order on screen while dragging (nothing is saved
+    // until the finger lifts), [dragOffset] how far the dragged block sits from its slot.
+    var dragId by remember { mutableStateOf<Long?>(null) }
+    var dragOffset by remember { mutableFloatStateOf(0f) }
+    var preview by remember { mutableStateOf<List<TodoItem>?>(null) }
+
+    /** Swap the dragged block past a sibling once it's dragged over half of it. */
+    fun settle() {
+        val id = dragId ?: return
+        var current = preview ?: return
+        val sizes = listState.layoutInfo.visibleItemsInfo.associate { it.key to it.size }
+        while (dragOffset != 0f) {
+            val dir = if (dragOffset > 0) 1 else -1
+            val neighbor = todoNeighbor(current, id, dir) ?: break
+            val height = todoBlock(current, neighbor).sumOf { (sizes[it]?.toFloat() ?: fallbackRowPx).toDouble() }.toFloat()
+            if (abs(dragOffset) < height / 2) break
+            current = inOrder(current, reorderedIds(current, id, dir) ?: break)
+            dragOffset -= dir * height
+        }
+        preview = current
+    }
+
+    fun endDrag() {
+        val order = preview?.map { it.id }
+        dragId = null
+        dragOffset = 0f
+        model.setDragging(false)
+        // The optimistic reorder lands before the preview goes, so nothing jumps back.
+        order?.let(model::reorder)
+        preview = null
+    }
+
+    // Near the top/bottom edge, scroll the list under the dragged row.
+    LaunchedEffect(dragId) {
+        val id = dragId ?: return@LaunchedEffect
+        while (true) {
+            withFrameNanos { }
+            val info = listState.layoutInfo
+            val row = info.visibleItemsInfo.firstOrNull { it.key == id } ?: continue
+            val top = row.offset + dragOffset
+            val step = when {
+                top < info.viewportStartOffset + edgePx -> -12f
+                top + row.size > info.viewportEndOffset - edgePx -> 12f
+                else -> 0f
+            }
+            if (step != 0f) {
+                val moved = listState.scrollBy(step)
+                dragOffset += moved
+                settle()
+            }
+        }
+    }
     LaunchedEffect(listState) {
         snapshotFlow { listState.firstVisibleItemIndex == 0 && listState.firstVisibleItemScrollOffset == 0 }
             .collect { latestOnAtTopChanged(it) }
@@ -124,16 +206,17 @@ fun TodoTab(
         }
 
         PullToRefreshBox(
-            isRefreshing = state.loading && day != null,
-            onRefresh = model::refresh,
+            isRefreshing = state.refreshing,
+            onRefresh = model::pullToRefresh,
             modifier = Modifier.fillMaxWidth().weight(1f),
         ) {
             when {
                 day == null && state.loading -> CircularProgressIndicator(Modifier.align(Alignment.Center))
                 day == null -> Unit
                 else -> {
-                    val items = day.items
+                    val items = preview ?: day.items
                     val depths = remember(items) { todoDepths(items) }
+                    val dragBlock = dragId?.let { todoBlock(items, it) }.orEmpty()
                     val checkable = items.filter { separatorKind(it.title) == null }
                     LazyColumn(
                         state = listState,
@@ -185,7 +268,38 @@ fun TodoTab(
                                 it.targetId == item.id ||
                                     (it.fallbackId == item.id && items.none { other -> other.id == it.targetId })
                             }
-                            Column(Modifier.animateItem()) {
+                            val lifted = item.id in dragBlock
+                            Column(
+                                (if (lifted) {
+                                    Modifier.zIndex(1f).graphicsLayer {
+                                        translationY = dragOffset
+                                        shadowElevation = 8.dp.toPx()
+                                        shape = RoundedCornerShape(12.dp)
+                                        clip = true
+                                    }.background(MaterialTheme.colorScheme.surfaceContainerHigh)
+                                } else {
+                                    Modifier.animateItem()
+                                }).pointerInput(item.id, state.canEdit) {
+                                    if (!state.canEdit) return@pointerInput
+                                    detectDragGesturesAfterLongPress(
+                                        onDragStart = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            draft = null
+                                            preview = latestItems
+                                            dragOffset = 0f
+                                            dragId = item.id
+                                            model.setDragging(true)
+                                        },
+                                        onDrag = { change, amount ->
+                                            change.consume()
+                                            dragOffset += amount.y
+                                            settle()
+                                        },
+                                        onDragEnd = ::endDrag,
+                                        onDragCancel = ::endDrag,
+                                    )
+                                },
+                            ) {
                                 TodoRow(
                                     item = item,
                                     depth = depth,
@@ -248,26 +362,57 @@ private fun Banner(
     }
 }
 
-/** "Add a task": Enter adds and the box stays focused for the next one. */
+/** "Add a task": a soft rounded pill (no outline) that lights up in the accent
+ *  colour when focused. Enter adds and the box stays focused for the next one. */
 @Composable
 private fun AddBox(onAdd: (String) -> Unit) {
     var text by remember { mutableStateOf("") }
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val colors = MaterialTheme.colorScheme
     fun submit() {
         val title = text.trim()
         if (title.isNotEmpty()) onAdd(title)
         text = ""
     }
-    OutlinedTextField(
+    val shape = RoundedCornerShape(24.dp)
+    BasicTextField(
         value = text,
         onValueChange = { text = it.replace("\n", "") },
         modifier = Modifier.fillMaxWidth(),
-        placeholder = { Text("Add a task") },
         singleLine = true,
-        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+        interactionSource = interaction,
+        textStyle = MaterialTheme.typography.bodyLarge.copy(color = colors.onSurface),
+        cursorBrush = SolidColor(colors.primary),
+        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done, capitalization = KeyboardCapitalization.Sentences),
         keyboardActions = KeyboardActions(onDone = { submit() }),
-        trailingIcon = {
-            IconButton(onClick = ::submit, enabled = text.isNotBlank()) {
-                Icon(Icons.Filled.Add, contentDescription = "Add")
+        decorationBox = { field ->
+            Row(
+                Modifier.fillMaxWidth()
+                    .height(48.dp)
+                    .clip(shape)
+                    .background(if (focused) colors.primaryContainer.copy(alpha = 0.35f) else colors.surfaceContainerHigh)
+                    .border(if (focused) 1.5.dp else 0.dp, if (focused) colors.primary else Color.Transparent, shape)
+                    .padding(start = 14.dp, end = 4.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Icon(
+                    Icons.Filled.Add,
+                    contentDescription = null,
+                    tint = if (focused) colors.primary else colors.onSurfaceVariant,
+                )
+                Spacer(Modifier.width(10.dp))
+                Box(Modifier.weight(1f)) {
+                    if (text.isEmpty()) {
+                        Text("Add a task", style = MaterialTheme.typography.bodyLarge, color = colors.onSurfaceVariant)
+                    }
+                    field()
+                }
+                if (text.isNotBlank()) {
+                    FilledTonalIconButton(onClick = ::submit, modifier = Modifier.size(40.dp)) {
+                        Icon(Icons.AutoMirrored.Filled.ArrowForward, contentDescription = "Add")
+                    }
+                }
             }
         },
     )
@@ -291,55 +436,73 @@ private fun TodoRow(
     onDelete: () -> Unit,
 ) {
     val separator = separatorKind(item.title)
+    if (separator != null) {
+        // Dividers and gaps span the whole row; a quick (yours) one gets its menu on top
+        // at the end, everything else needs no slot for it.
+        Box(
+            Modifier.fillMaxWidth().padding(start = INDENT * depth).height(if (canEdit && canDelete(item)) 48.dp else 24.dp),
+            contentAlignment = Alignment.CenterEnd,
+        ) {
+            if (separator == SeparatorKind.RULE) {
+                HorizontalDivider(Modifier.fillMaxWidth().padding(horizontal = 12.dp).align(Alignment.Center))
+            }
+            if (canEdit && canDelete(item)) {
+                Box(Modifier.background(MaterialTheme.colorScheme.surface, CircleShape)) {
+                    RowMenu(
+                        item = item,
+                        canMoveUp = canMoveUp,
+                        canMoveDown = canMoveDown,
+                        onRename = onStartRename,
+                        onAddSubtask = onAddSubtask,
+                        onMove = onMove,
+                        onDelete = onDelete,
+                    )
+                }
+            }
+        }
+        return
+    }
     Row(
         Modifier.fillMaxWidth().padding(start = INDENT * depth),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        when {
-            separator == SeparatorKind.RULE ->
-                HorizontalDivider(Modifier.weight(1f).padding(horizontal = 12.dp, vertical = 12.dp))
-            separator == SeparatorKind.SPACE -> Spacer(Modifier.weight(1f).height(24.dp))
-            else -> {
-                Checkbox(checked = item.completed, onCheckedChange = { onToggle() }, enabled = canEdit)
-                if (renaming) {
-                    InlineField(
-                        initial = item.title,
-                        modifier = Modifier.weight(1f),
-                        onSubmit = { onRename(it, true) },
-                        onCancel = onCancel,
+        Checkbox(checked = item.completed, onCheckedChange = { onToggle() }, enabled = canEdit)
+        if (renaming) {
+            InlineField(
+                initial = item.title,
+                modifier = Modifier.weight(1f),
+                onSubmit = { onRename(it, true) },
+                onCancel = onCancel,
+            )
+        } else {
+            Column(
+                Modifier.weight(1f)
+                    .clickable(enabled = canEdit && canRename(item), onClick = onStartRename)
+                    .padding(vertical = 8.dp),
+            ) {
+                Text(
+                    item.title,
+                    style = MaterialTheme.typography.bodyLarge,
+                    textDecoration = if (item.completed) TextDecoration.LineThrough else null,
+                    color = if (item.completed) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else {
+                        MaterialTheme.colorScheme.onSurface
+                    },
+                )
+                if (subtitle.isNotEmpty()) {
+                    Text(
+                        subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                } else {
-                    Column(
-                        Modifier.weight(1f)
-                            .clickable(enabled = canEdit && canRename(item), onClick = onStartRename)
-                            .padding(vertical = 8.dp),
-                    ) {
-                        Text(
-                            item.title,
-                            style = MaterialTheme.typography.bodyLarge,
-                            textDecoration = if (item.completed) TextDecoration.LineThrough else null,
-                            color = if (item.completed) {
-                                MaterialTheme.colorScheme.onSurfaceVariant
-                            } else {
-                                MaterialTheme.colorScheme.onSurface
-                            },
-                        )
-                        if (subtitle.isNotEmpty()) {
-                            Text(
-                                subtitle,
-                                style = MaterialTheme.typography.bodySmall,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
-                        item.error?.let {
-                            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
-                        }
-                    }
+                }
+                item.error?.let {
+                    Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
                 }
             }
         }
-        // Separators only get a menu when they're yours (quick) and so deletable/movable.
-        if (canEdit && !renaming && (separator == null || canDelete(item))) {
+        if (canEdit && !renaming) {
             RowMenu(
                 item = item,
                 canMoveUp = canMoveUp,

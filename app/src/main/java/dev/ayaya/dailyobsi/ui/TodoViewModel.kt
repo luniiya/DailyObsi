@@ -9,8 +9,10 @@ import dev.ayaya.dailyobsi.todo.TodoCache
 import dev.ayaya.dailyobsi.todo.TodoDay
 import dev.ayaya.dailyobsi.todo.TodoException
 import dev.ayaya.dailyobsi.todo.TodoItem
+import dev.ayaya.dailyobsi.todo.inOrder
 import dev.ayaya.dailyobsi.todo.parseTodoDay
 import dev.ayaya.dailyobsi.todo.reorderedIds
+import dev.ayaya.dailyobsi.todo.todoNeedsReload
 import dev.ayaya.dailyobsi.todo.todoRetryDate
 import dev.ayaya.dailyobsi.todo.withCompleted
 import java.io.File
@@ -35,6 +37,8 @@ data class TodoUiState(
     /** [day] came from the server in this session, not from the cache. */
     val fresh: Boolean = false,
     val loading: Boolean = false,
+    /** A pull-to-refresh is running; the indicator only springs back when this goes true -> false. */
+    val refreshing: Boolean = false,
     /** Nextcloud couldn't be reached; [day] (if any) is the cached copy fetched at [cachedAt]. */
     val offline: Boolean = false,
     val cachedAt: Long? = null,
@@ -55,6 +59,7 @@ class TodoViewModel(application: Application) : AndroidViewModel(application) {
     private val cache = TodoCache(File(application.filesDir, "todo-cache"))
     private val writeLock = Mutex()
     private var pendingWrites = 0
+    private var dragging = false
     private var viewingToday = true
     private var loadJob: Job? = null
 
@@ -81,13 +86,37 @@ class TodoViewModel(application: Application) : AndroidViewModel(application) {
     /** Re-read from the server, keeping what's on screen meanwhile. */
     fun refresh() = reload(silent = mutableState.value.day != null)
 
-    /** Picks up changes made elsewhere (web UI, the agent) while the tab is
-     *  on screen. Called every [POLL_INTERVAL_MS]; skips a beat while edits
-     *  are going out or a load is already running. Doubles as the automatic
-     *  retry when offline. */
-    fun poll() {
-        if (pendingWrites > 0 || loadJob?.isActive == true) return
+    /** Pull-to-refresh: like [refresh], but drives the indicator. */
+    fun pullToRefresh() {
+        mutableState.update { it.copy(refreshing = true) }
         reload(silent = true)
+        // However the load ends (done, failed, cancelled by a newer one), let the indicator go.
+        loadJob?.invokeOnCompletion { mutableState.update { it.copy(refreshing = false) } }
+            ?: mutableState.update { it.copy(refreshing = false) }
+    }
+
+    /** Picks up changes made elsewhere (web UI, the agent) while the tab is
+     *  on screen. Called every [POLL_INTERVAL_MS]: asks the server for the
+     *  day's version and fetches the whole day only when it moved. Skips a
+     *  beat while edits are going out or a load is already running. Doubles
+     *  as the automatic retry when offline. */
+    fun poll() {
+        if (dragging || pendingWrites > 0 || loadJob?.isActive == true) return
+        val current = mutableState.value
+        val day = current.day
+        if (day?.version == null || !current.fresh || current.offline) {
+            reload(silent = true)
+            return
+        }
+        loadJob = viewModelScope.launch {
+            val server = try {
+                client.dayVersion(day.day)
+            } catch (error: TodoException) {
+                null // fall through to a full reload, which handles offline/errors
+            }
+            if (pendingWrites > 0 || mutableState.value.day !== day) return@launch
+            if (todoNeedsReload(day.version, server)) reload(silent = true)
+        }
     }
 
     fun clearMessage() = mutableState.update { it.copy(message = null) }
@@ -106,7 +135,10 @@ class TodoViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun toggle(item: TodoItem) = write(
-        optimistic = { withCompleted(it, item.id, !item.completed) },
+        optimistic = { items ->
+            val cascade = mutableState.value.day?.completeSubtasks == true
+            withCompleted(items, item.id, !item.completed, cascade)
+        },
     ) { client.complete(item.id, !item.completed) }
 
     /** The "Add a task" box: the server slots it in with the day's tasks. */
@@ -133,9 +165,19 @@ class TodoViewModel(application: Application) : AndroidViewModel(application) {
 
     fun move(item: TodoItem, delta: Int) {
         val items = mutableState.value.day?.items ?: return
-        val order = reorderedIds(items, item.id, delta) ?: return
-        val byId = items.associateBy { it.id }
-        write(optimistic = { order.mapNotNull(byId::get) }) { date -> client.reorder(date, order) }
+        reorderedIds(items, item.id, delta)?.let(::reorder)
+    }
+
+    /** Save a whole new order at once (the end of a drag); one request however far it moved. */
+    fun reorder(order: List<Long>) {
+        val items = mutableState.value.day?.items ?: return
+        if (order == items.map { it.id }) return
+        write(optimistic = { inOrder(it, order) }) { date -> client.reorder(date, order) }
+    }
+
+    /** While a row is being dragged, polling would reshuffle the list under the finger. */
+    fun setDragging(dragging: Boolean) {
+        this.dragging = dragging
     }
 
     private fun write(

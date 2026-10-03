@@ -41,7 +41,7 @@ A **board** (one per user) has **days**. A day is a flat, ordered list of
 |---|---|---|---|---|
 | `routine` | generated daily from the board's Template | yes (that day only) | no | yes |
 | `event` | Calendar event that day (read-only mirror) | no | no | yes |
-| `task` | Tasks VTODO, placed by start date (else due date) | yes (rewrites SUMMARY in Tasks) | no | yes (written back to CalDAV; a parent completes its subtasks) |
+| `task` | Tasks VTODO, placed by start date (else due date) | yes (rewrites SUMMARY in Tasks) | no | yes (written back to CalDAV) |
 | `quick` | added by hand | yes | yes | yes |
 
 - Items titled `---`/`___` are **divider lines** and `<br>` items are **blank
@@ -185,3 +185,32 @@ The user wants changes to show up on both ends without a manual refresh.
   >
   > Real push (Nextcloud `notify_push`) would avoid polling, but needs a
   > separate push server; polling one small JSON route is fine for one user.
+
+## Subtasks are independent by default (2026-10-03)
+
+The user asked for ticking a parent to leave its subtasks alone. The plugin
+now has a board setting, **`completeSubtasks`** (Settings in the web UI, off by
+default). When it's on, ticking a parent ticks its subtasks; unticking never
+cascades. `GET /api/day` returns it, and it's part of the day's `version`, so
+flipping it reaches the phone by itself. The app's optimistic tick
+(`withCompleted(..., completeSubtasks)`) follows it.
+
+## Moving rows: long-press drag (2026-10-03)
+
+The web UI got a "Move" bubble (▲ Done ▼) in the plugin's ac7cbd2. On Android
+the natural gesture is **long-press a row, drag, release** (`TodoTab`):
+
+- Same rules as Move up/down: a parent carries its subtasks, a subtask only
+  moves among its siblings. While dragging, the block swaps with a sibling
+  block once dragged over half of it (`todoNeighbor`, `todoBlock`,
+  `reorderedIds`), the list auto-scrolls near the edges, and polling pauses
+  (`TodoViewModel.setDragging`).
+- Nothing is saved until release; then **one** `PUT /api/day/{date}/order`
+  with the final order (`TodoViewModel.reorder`). No server change was needed.
+  Re-parenting (dragging a task into/out of another as a subtask) would need
+  one: the order route only sets positions, never `parent_id`.
+- Move up / Move down stay in the ⋯ menu as the fallback.
+- Separator rows (`---`, `<br>`) span the full width; a quick one's ⋯ sits on
+  top at the end instead of reserving a column.
+- The "Add a task" field is a soft rounded pill (no outline) that gets an accent
+  border when focused, plus a round "add" button once there's text.
